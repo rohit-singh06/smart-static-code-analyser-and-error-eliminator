@@ -1,4 +1,4 @@
-# Smart Static Code Analyzer (Phase 1 - 40%)
+# Smart Static Code Analyzer
 
 A simple **C-like language** static analyzer implemented in Python + Flask.
 
