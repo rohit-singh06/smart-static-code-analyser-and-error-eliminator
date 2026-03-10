@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Smart Static Code Analyzer</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Smart Static Code Analyzer</h1>
+            <p class="subtitle">Phase 1 – Lexer, Parser, AST</p>
+        </header>
+
+        <main>
+            <section class="editor-section">
+                <label for="code">Source Code (C-like subset)</label>
+                <textarea id="code" rows="12" spellcheck="false">int x;
+x = 10;
+return;
+</textarea>
+                <button id="analyze-btn" type="button">Analyze</button>
+            </section>
+
+            <section class="output-section">
+                <div class="pane">
+                    <h2>Tokens</h2>
+                    <pre id="tokens-output" class="output-box">[tokens will appear here]</pre>
+                </div>
+                <div class="pane">
+                    <h2>AST</h2>
+                    <pre id="ast-output" class="output-box">[AST will appear here]</pre>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <script>
+        const analyzeBtn = document.getElementById('analyze-btn');
+        const codeInput = document.getElementById('code');
+        const tokensOutput = document.getElementById('tokens-output');
+        const astOutput = document.getElementById('ast-output');
+
+        analyzeBtn.addEventListener('click', async () => {
+            const code = codeInput.value;
+            tokensOutput.textContent = 'Analyzing...';
+            astOutput.textContent = 'Analyzing...';
+
+            try {
+                const res = await fetch('/analyze', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ code })
+                });
+
+                const data = await res.json();
+
+                if (data.errors && data.errors.length) {
+                    tokensOutput.textContent = 'Errors:\\n' + data.errors.join('\\n');
+                    astOutput.textContent = 'No AST (errors present).';
+                    return;
+                }
+
+                tokensOutput.textContent = JSON.stringify(data.tokens, null, 2);
+                astOutput.textContent = JSON.stringify(data.ast, null, 2);
+            } catch (err) {
+                tokensOutput.textContent = 'Request error: ' + err.message;
+                astOutput.textContent = '';
+            }
+        });
+    </script>
+</body>
+</html>
+
