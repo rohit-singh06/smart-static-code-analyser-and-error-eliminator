@@ -112,3 +112,4 @@ Response body:
 
 If lexical or syntax errors are detected, they are returned in the `errors` array and `ast` will be `null`.
 
+# Contributrd by Nush
