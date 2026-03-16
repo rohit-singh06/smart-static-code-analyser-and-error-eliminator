@@ -5,8 +5,9 @@ Supported token types:
     - KEYWORD   : 'int', 'return'
     - IDENTIFIER: variable names (letters, digits, underscore, starting with letter/_)
     - NUMBER    : integer literals
+    - STRING    : double-quoted string literals (basic escapes supported)
     - OPERATOR  : = + - * /
-    - SYMBOL    : ; { } ( )
+    - SYMBOL    : ; { } ( ) ,
 
 Each token has (type, value, line).
 """
@@ -19,7 +20,7 @@ from typing import List
 
 KEYWORDS = {"int", "return"}
 OPERATORS = {"=", "+", "-", "*", "/"}
-SYMBOLS = {";", "{", "}", "(", ")"}
+SYMBOLS = {";", "{", "}", "(", ")", ","}
 
 
 @dataclass
@@ -85,6 +86,46 @@ class Lexer:
             c = self._current_char()
         return Token(type="NUMBER", value="".join(digits), line=start_line)
 
+    def _string(self) -> Token:
+        """
+        Read a double-quoted string literal.
+        Supports basic escapes: \\n, \\t, \\r, \\\", \\\\
+        """
+        start_line = self.line
+        # Consume opening quote
+        self._advance()
+        chars: list[str] = []
+
+        while True:
+            c = self._current_char()
+            if c is None:
+                raise LexicalError("Unterminated string literal", start_line)
+            if c == "\n":
+                raise LexicalError("Unterminated string literal", start_line)
+            if c == '"':
+                # closing quote
+                self._advance()
+                break
+            if c == "\\":
+                self._advance()
+                esc = self._current_char()
+                if esc is None:
+                    raise LexicalError("Unterminated string escape", start_line)
+                mapping = {
+                    "n": "\n",
+                    "t": "\t",
+                    "r": "\r",
+                    '"': '"',
+                    "\\": "\\",
+                }
+                chars.append(mapping.get(esc, esc))
+                self._advance()
+                continue
+            chars.append(c)
+            self._advance()
+
+        return Token(type="STRING", value="".join(chars), line=start_line)
+
     def tokenize(self) -> List[Token]:
         tokens: List[Token] = []
         while (c := self._current_char()) is not None:
@@ -98,6 +139,10 @@ class Lexer:
 
             if c.isdigit():
                 tokens.append(self._number())
+                continue
+
+            if c == '"':
+                tokens.append(self._string())
                 continue
 
             if c in OPERATORS:

@@ -6,8 +6,12 @@ from __future__ import annotations
 
 from typing import Any, List
 
-from .ast_nodes import ASTNode
-from .lexer import Token
+try:
+    from .ast_nodes import ASTNode
+    from .lexer import Token
+except ImportError:
+    from ast_nodes import ASTNode
+    from lexer import Token
 
 
 def ast_to_dict(node: ASTNode) -> dict:

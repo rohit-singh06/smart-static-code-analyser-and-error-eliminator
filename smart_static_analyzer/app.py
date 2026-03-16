@@ -9,9 +9,20 @@ from __future__ import annotations
 
 from flask import Flask, render_template, request, jsonify
 
-from .lexer import lex, LexicalError
-from .parser import parse, ParseError
-from .utils import ast_to_dict, tokens_to_list
+try:
+    # When run as a module: python -m smart_static_analyzer.app
+    from .lexer import lex, LexicalError
+    from .parser import parse, ParseError
+    from .utils import ast_to_dict, tokens_to_list
+    from .compiler.compile_checker import check_with_gcc
+    from .analyzer.ast_parser import parse_with_pycparser
+except ImportError:
+    # When run as a script: python app.py
+    from lexer import lex, LexicalError
+    from parser import parse, ParseError
+    from utils import ast_to_dict, tokens_to_list
+    from compiler.compile_checker import check_with_gcc
+    from analyzer.ast_parser import parse_with_pycparser
 
 
 app = Flask(__name__, template_folder="templates", static_folder="static")
@@ -39,20 +50,41 @@ def analyze_code():
     try:
         tokens = lex(source)
         ast_root = parse(tokens)
+        gcc_result = check_with_gcc(source)
+        pyc_result = parse_with_pycparser(source)
         return jsonify(
             {
                 "tokens": tokens_to_list(tokens),
                 "ast": ast_to_dict(ast_root),
+                "gcc": gcc_result.to_dict(),
+                "pycparser": pyc_result.to_dict(),
                 "errors": [],
             }
         )
     except LexicalError as le:
-        return jsonify({"tokens": [], "ast": None, "errors": [str(le)]}), 400
+        gcc_result = check_with_gcc(source)
+        pyc_result = parse_with_pycparser(source)
+        return jsonify({"tokens": [], "ast": None, "gcc": gcc_result.to_dict(), "pycparser": pyc_result.to_dict(), "errors": [str(le)]}), 400
     except ParseError as pe:
-        return jsonify({"tokens": tokens_to_list(lex(source)), "ast": None, "errors": [str(pe)]}), 400
+        gcc_result = check_with_gcc(source)
+        pyc_result = parse_with_pycparser(source)
+        return jsonify({"tokens": tokens_to_list(lex(source)), "ast": None, "gcc": gcc_result.to_dict(), "pycparser": pyc_result.to_dict(), "errors": [str(pe)]}), 400
     except Exception as e:
         # Fallback for unexpected errors
-        return jsonify({"tokens": [], "ast": None, "errors": [f"Internal error: {e}"]}), 500
+        gcc_result = check_with_gcc(source) if isinstance(source, str) else None
+        pyc_result = parse_with_pycparser(source) if isinstance(source, str) else None
+        return (
+            jsonify(
+                {
+                    "tokens": [],
+                    "ast": None,
+                    "gcc": gcc_result.to_dict() if gcc_result else None,
+                    "pycparser": pyc_result.to_dict() if pyc_result else None,
+                    "errors": [f"Internal error: {e}"],
+                }
+            ),
+            500,
+        )
 
 
 if __name__ == "__main__":

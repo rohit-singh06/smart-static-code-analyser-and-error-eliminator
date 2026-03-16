@@ -17,13 +17,14 @@ Grammar (extended):
 
     Declaration       → 'int' IDENTIFIER ('=' Expression)? ';'
     Assignment        → IDENTIFIER '=' Expression ';'
-    ReturnStatement   → 'return' ';'
+    ReturnStatement   → 'return' Expression? ';'
     Block             → '{' StatementList '}'
     ExpressionStatement → Expression ';'
 
     Expression        → Term ((+ | -) Term)*
     Term              → IDENTIFIER [ '(' ArgList? ')' ]
                       | NUMBER
+                      | STRING
 
     ArgList           → Expression (',' Expression)*
 """
@@ -32,21 +33,42 @@ from __future__ import annotations
 
 from typing import List
 
-from .lexer import Token
-from .ast_nodes import (
-    ASTNode,
-    program_node,
-    declaration_node,
-    assignment_node,
-    return_node,
-    block_node,
-    binary_op_node,
-    identifier_node,
-    number_node,
-    function_def_node,
-    expression_stmt_node,
-    call_expression_node,
-)
+try:
+    # When imported as a package module
+    from .lexer import Token
+    from .ast_nodes import (
+        ASTNode,
+        program_node,
+        declaration_node,
+        assignment_node,
+        return_node,
+        block_node,
+        binary_op_node,
+        identifier_node,
+        number_node,
+        string_node,
+        function_def_node,
+        expression_stmt_node,
+        call_expression_node,
+    )
+except ImportError:
+    # When run/loaded as plain files (e.g. app.py executed directly)
+    from lexer import Token
+    from ast_nodes import (
+        ASTNode,
+        program_node,
+        declaration_node,
+        assignment_node,
+        return_node,
+        block_node,
+        binary_op_node,
+        identifier_node,
+        number_node,
+        string_node,
+        function_def_node,
+        expression_stmt_node,
+        call_expression_node,
+    )
 
 
 class ParseError(Exception):
@@ -198,10 +220,18 @@ class Parser:
         return assign
 
     def _parse_return(self) -> ASTNode:
-        # 'return' ';'
-        ret = self._match(expected_type="KEYWORD", expected_value="return")
+        # 'return' Expression? ';'
+        self._match(expected_type="KEYWORD", expected_value="return")
+        node = return_node()
+
+        # Optional expression until ';'
+        tok = self._current()
+        if tok is not None and not (tok.type == "SYMBOL" and tok.value == ";"):
+            expr = self._parse_expression()
+            node.add_child(expr)
+
         self._match(expected_type="SYMBOL", expected_value=";")
-        return return_node()
+        return node
 
     def _parse_block(self) -> ASTNode:
         # '{' StatementList '}'
@@ -231,7 +261,7 @@ class Parser:
 
     def _parse_term(self) -> ASTNode:
         """
-        Term → IDENTIFIER [ '(' ArgList? ')' ] | NUMBER
+        Term → IDENTIFIER [ '(' ArgList? ')' ] | NUMBER | STRING
         """
         token = self._current()
         if token is None:
@@ -267,7 +297,11 @@ class Parser:
             num = self._match(expected_type="NUMBER")
             return number_node(int(num.value))
 
-        raise ParseError(f"Expected IDENTIFIER or NUMBER, got '{token.value}'", token.line)
+        if token.type == "STRING":
+            s = self._match(expected_type="STRING")
+            return string_node(s.value)
+
+        raise ParseError(f"Expected IDENTIFIER, NUMBER, or STRING, got '{token.value}'", token.line)
 
 
 def parse(tokens: List[Token]) -> ASTNode:

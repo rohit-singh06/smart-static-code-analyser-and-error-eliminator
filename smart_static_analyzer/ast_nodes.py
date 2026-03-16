@@ -58,6 +58,10 @@ def number_node(value: int) -> ASTNode:
     return ASTNode(type="Number", value=value)
 
 
+def string_node(value: str) -> ASTNode:
+    return ASTNode(type="String", value=value)
+
+
 def function_def_node(name: str) -> ASTNode:
     """Function definition node; body block is attached as a child."""
     return ASTNode(type="FunctionDef", value=name)
