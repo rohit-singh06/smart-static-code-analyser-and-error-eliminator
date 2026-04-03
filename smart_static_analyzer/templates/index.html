@@ -1,74 +1,825 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <title>Smart Static Code Analyzer</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Smart Static Code Analyzer</title>
+  <meta name="description" content="Advanced static analysis dashboard for C-like code — lexer, parser, AST, GCC, pycparser, and metrics." />
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
 </head>
 <body>
-    <div class="container">
-        <header>
-            <h1>Smart Static Code Analyzer</h1>
-            <p class="subtitle">Phase 1 – Lexer, Parser, AST</p>
-        </header>
 
-        <main>
-            <section class="editor-section">
-                <label for="code">Source Code (C-like subset)</label>
-                <textarea id="code" rows="12" spellcheck="false">int x;
-x = 10;
-return;
-</textarea>
-                <button id="analyze-btn" type="button">Analyze</button>
-            </section>
+<!-- ═══════════════════ NAVBAR ═══════════════════ -->
+<nav class="navbar" id="navbar">
+  <div class="nav-brand">
+    <div class="brand-icon">⚙</div>
+    <span class="brand-name">CodeAnalyzer</span>
+    <span class="brand-version">v2.0</span>
+  </div>
 
-            <section class="output-section">
-                <div class="pane">
-                    <h2>Tokens</h2>
-                    <pre id="tokens-output" class="output-box">[tokens will appear here]</pre>
-                </div>
-                <div class="pane">
-                    <h2>AST</h2>
-                    <pre id="ast-output" class="output-box">[AST will appear here]</pre>
-                </div>
-            </section>
-        </main>
+  <div class="nav-links">
+    <button class="nav-btn active" id="btn-analyzer">Analyzer</button>
+    <button class="nav-btn" id="btn-history">History</button>
+  </div>
+
+  <div class="nav-actions">
+    <div class="export-wrapper">
+      <button class="btn-outline" id="export-btn">Export ↓</button>
+      <div class="export-menu hidden" id="export-menu">
+        <button onclick="exportData('tokens')">⬇ Tokens (JSON)</button>
+        <button onclick="exportData('ast')">⬇ AST (JSON)</button>
+        <button onclick="exportData('full')">⬇ Full Report (JSON)</button>
+      </div>
+    </div>
+    <div class="status-dot" id="status-dot" title="Ready"></div>
+  </div>
+</nav>
+
+<!-- ═══════════════════ STATS CARDS ═══════════════════ -->
+<div class="stats-row">
+  <div class="stat-card" id="card-tokens">
+    <div class="stat-value" id="sv-tokens">—</div>
+    <div class="stat-label">Total Tokens</div>
+  </div>
+  <div class="stat-card" id="card-errors">
+    <div class="stat-value" id="sv-errors">—</div>
+    <div class="stat-label">Errors</div>
+  </div>
+  <div class="stat-card" id="card-functions">
+    <div class="stat-value" id="sv-functions">—</div>
+    <div class="stat-label">Functions</div>
+  </div>
+  <div class="stat-card" id="card-variables">
+    <div class="stat-value" id="sv-variables">—</div>
+    <div class="stat-label">Variables</div>
+  </div>
+  <div class="stat-card" id="card-depth">
+    <div class="stat-value" id="sv-depth">—</div>
+    <div class="stat-label">AST Depth</div>
+  </div>
+</div>
+
+<!-- ═══════════════════ WORKSPACE ═══════════════════ -->
+<div class="workspace">
+
+  <!-- ─── LEFT: Code Editor ─── -->
+  <div class="panel editor-panel">
+    <div class="panel-header">
+      <div class="panel-title">📝 Source Code</div>
+      <div class="toolbar">
+        <select id="preset-select" class="preset-select" title="Load a sample snippet">
+          <option value="">▾ Load Preset</option>
+          <option value="hello">Hello World</option>
+          <option value="variables">Variables</option>
+          <option value="arithmetic">Arithmetic</option>
+          <option value="function">Function Def</option>
+          <option value="complex">Complex</option>
+          <option value="multiline">Multi-block</option>
+          <option value="headers">With #include Headers</option>
+          <option value="printf">stdio printf example</option>
+        </select>
+
+        <!-- File Upload -->
+        <input type="file" id="file-upload" accept=".c,.h,.txt" style="display:none" />
+        <button class="btn-upload" id="upload-btn" title="Upload a .c file" onclick="document.getElementById('file-upload').click()">
+          ↑ Upload .c
+        </button>
+
+        <button class="btn-primary" id="analyze-btn" title="Ctrl+Enter">⚡ Analyze</button>
+      </div>
     </div>
 
-    <script>
-        const analyzeBtn = document.getElementById('analyze-btn');
-        const codeInput = document.getElementById('code');
-        const tokensOutput = document.getElementById('tokens-output');
-        const astOutput = document.getElementById('ast-output');
+    <div class="editor-wrapper" id="editor-wrapper">
+      <div class="line-numbers" id="line-numbers"><span>1</span></div>
+      <textarea
+        id="code-editor"
+        spellcheck="false"
+        autocorrect="off"
+        autocapitalize="off"
+        placeholder="Enter C-like code here…"
+      >int main() {
+    int x = 10;
+    int y = x + 5;
+    return y;
+}</textarea>
+    </div>
 
-        analyzeBtn.addEventListener('click', async () => {
-            const code = codeInput.value;
-            tokensOutput.textContent = 'Analyzing...';
-            astOutput.textContent = 'Analyzing...';
+    <div class="editor-footer">
+      <span id="cursor-pos">Ln 1, Col 1</span>
+      <span>C-like · Ctrl+Enter to analyze</span>
+      <span id="char-count">0 chars</span>
+    </div>
+  </div>
 
-            try {
-                const res = await fetch('/analyze', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ code })
-                });
+  <!-- ─── RIGHT: Output Panel ─── -->
+  <div class="panel output-panel">
+    <div class="panel-header" style="padding-top:.35rem;padding-bottom:0;align-items:flex-end;">
+      <div class="tab-bar" id="tab-bar">
+        <button class="tab active" data-tab="tokens">Tokens <span class="tab-badge" id="tok-badge">0</span></button>
+        <button class="tab" data-tab="ast">AST</button>
+        <button class="tab" data-tab="gcc">GCC <span class="tab-badge" id="gcc-tab-badge">—</span></button>
+        <button class="tab" data-tab="pycparser">pycparser</button>
+        <button class="tab" data-tab="metrics">Metrics</button>
+        <button class="tab" data-tab="semantic">Semantic <span class="tab-badge" id="sem-tab-badge">0</span></button>
+      </div>
+    </div>
 
-                const data = await res.json();
+    <div class="tab-content" id="tab-content">
 
-                if (data.errors && data.errors.length) {
-                    tokensOutput.textContent = 'Errors:\\n' + data.errors.join('\\n');
-                    astOutput.textContent = 'No AST (errors present).';
-                    return;
-                }
+      <!-- Tokens -->
+      <div class="tab-pane" id="tab-tokens">
+        <div class="empty-state" id="tok-empty">
+          <div class="empty-icon">🔤</div>
+          <span>Run analysis to see tokens</span>
+        </div>
+        <div class="hidden" id="tok-table-wrap">
+          <table class="token-table">
+            <thead><tr><th>Line</th><th>Type</th><th>Value</th></tr></thead>
+            <tbody id="tok-tbody"></tbody>
+          </table>
+        </div>
+      </div>
 
-                tokensOutput.textContent = JSON.stringify(data.tokens, null, 2);
-                astOutput.textContent = JSON.stringify(data.ast, null, 2);
-            } catch (err) {
-                tokensOutput.textContent = 'Request error: ' + err.message;
-                astOutput.textContent = '';
-            }
-        });
-    </script>
+      <!-- AST -->
+      <div class="tab-pane hidden" id="tab-ast">
+        <div class="ast-controls" id="ast-ctrls" style="display:none">
+          <button class="btn-sm" onclick="expandAllAST()">Expand All</button>
+          <button class="btn-sm" onclick="collapseAllAST()">Collapse All</button>
+        </div>
+        <div id="ast-tree">
+          <div class="empty-state"><div class="empty-icon">🌲</div><span>Run analysis to see AST</span></div>
+        </div>
+      </div>
+
+      <!-- GCC -->
+      <div class="tab-pane hidden" id="tab-gcc">
+        <div id="gcc-content">
+          <div class="empty-state"><div class="empty-icon">🔨</div><span>Run analysis to see GCC results</span></div>
+        </div>
+      </div>
+
+      <!-- pycparser -->
+      <div class="tab-pane hidden" id="tab-pycparser">
+        <div id="pyc-content">
+          <div class="empty-state"><div class="empty-icon">🧩</div><span>Run analysis to see pycparser results</span></div>
+        </div>
+      </div>
+
+      <!-- Metrics -->
+      <div class="tab-pane hidden" id="tab-metrics">
+        <div id="metrics-content">
+          <div class="empty-state"><div class="empty-icon">📊</div><span>Run analysis to see metrics</span></div>
+        </div>
+      </div>
+
+      <!-- Semantic Analysis -->
+      <div class="tab-pane hidden" id="tab-semantic">
+        <div id="semantic-content">
+          <div class="empty-state"><div class="empty-icon">🔎</div><span>Run analysis to see semantic results</span></div>
+        </div>
+      </div>
+
+    </div><!-- /tab-content -->
+  </div><!-- /output-panel -->
+
+</div><!-- /workspace -->
+
+<!-- ═══════════════════ ERRORS PANEL ═══════════════════ -->
+<div class="errors-panel hidden" id="errors-panel">
+  <div class="errors-header">
+    <span>⚠ Analysis Errors</span>
+    <button onclick="document.getElementById('errors-panel').classList.add('hidden')" title="Dismiss">✕</button>
+  </div>
+  <ul id="errors-list"></ul>
+</div>
+
+<!-- ═══════════════════ STATUS BAR ═══════════════════ -->
+<div class="status-bar">
+  <span id="status-msg">Ready — paste or type C-like code, then click Analyze or press Ctrl+Enter.</span>
+  <div class="status-right">
+    <span id="gcc-status">GCC: —</span>
+    <span id="pyc-status">pycparser: —</span>
+    <span id="analyze-time"></span>
+  </div>
+</div>
+
+<!-- ═══════════════════ HISTORY DRAWER ═══════════════════ -->
+<div class="drawer-overlay hidden" id="drawer-overlay"></div>
+<div class="history-drawer hidden" id="history-drawer">
+  <div class="drawer-header">
+    <h3>Analysis History</h3>
+    <div class="drawer-actions">
+      <button class="btn-sm danger" onclick="clearHistory()">Clear All</button>
+      <button class="drawer-close" id="close-drawer">✕</button>
+    </div>
+  </div>
+  <div class="history-list" id="history-list">
+    <div class="empty-state"><span>No history yet</span></div>
+  </div>
+</div>
+
+<!-- ═══════════════════ JAVASCRIPT ═══════════════════ -->
+<script>
+"use strict";
+
+/* ─── State ─────────────────────────────────────────── */
+let lastResult = null;
+let currentTab = "tokens";
+
+/* ─── Presets ────────────────────────────────────────── */
+const PRESETS = {
+  hello:
+`int main() {
+    return 0;
+}`,
+  variables:
+`int a;
+int b;
+a = 5;
+b = a + 10;
+return b;`,
+  arithmetic:
+`int x = 1;
+int y = 2;
+int z = x + y - 1;
+return z;`,
+  function:
+`int add() {
+    int a = 10;
+    int b = 20;
+    return a;
+}`,
+  complex:
+`int main() {
+    int a = 1;
+    int b = a + 2;
+    {
+        int c = b;
+        c = c + 1;
+    }
+    return a;
+}`,
+  multiline:
+`int foo() {
+    int i = 0;
+    {
+        int j = i + 1;
+        {
+            int k = j + 2;
+            return k;
+        }
+    }
+    return i;
+}`,
+  headers:
+`#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+int main() {
+    int x = 10;
+    int y = x + 5;
+    return 0;
+}`,
+  printf:
+`#include <stdio.h>
+
+// Entry point
+int main() {
+    int count = 5;
+    /* loop would go here */
+    printf("Hello, World!");
+    return 0;
+}`,
+};
+
+/* ─── DOM refs ───────────────────────────────────────── */
+const codeEditor   = document.getElementById("code-editor");
+const lineNumbers  = document.getElementById("line-numbers");
+const analyzeBtn   = document.getElementById("analyze-btn");
+
+/* ─── Core: Analyze ──────────────────────────────────── */
+async function analyzeCode() {
+  const code = codeEditor.value;
+  if (!code.trim()) return;
+
+  setLoading(true);
+  const t0 = performance.now();
+
+  try {
+    const res = await fetch("/analyze", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code }),
+    });
+    const data = await res.json();
+    const elapsed = ((performance.now() - t0) / 1000).toFixed(3);
+
+    lastResult = data;
+    updateStats(data);
+    renderCurrentTab();
+    updateStatusBar(data, elapsed);
+    if (data.errors && data.errors.length) showErrors(data.errors);
+    else hideErrors();
+    loadHistory();
+
+  } catch (err) {
+    showErrors([`Network error: ${err.message}`]);
+  } finally {
+    setLoading(false);
+  }
+}
+
+/* ─── Stats Cards ────────────────────────────────────── */
+function updateStats(data) {
+  const toks = (data.tokens || []).length;
+  const m    = data.metrics || {};
+  const sem  = data.semantic || {};
+  const fns  = (m.functions || []).length;
+  const vars = (m.variables || []).length;
+  const dep  = m.ast_depth != null ? m.ast_depth : "—";
+
+  // Prefer semantic error count; fall back to parse error count
+  const semErrs = sem.error_count != null ? sem.error_count : (data.errors || []).length;
+  const semWarn = sem.warning_count || 0;
+  const totalIssues = semErrs + semWarn;
+
+  setStatVal("sv-tokens",    toks);
+  setStatVal("sv-errors",    semErrs > 0 ? semErrs + " err" : semWarn > 0 ? semWarn + " warn" : "0");
+  setStatVal("sv-functions", fns);
+  setStatVal("sv-variables", vars);
+  setStatVal("sv-depth",     dep);
+
+  const eCard = document.getElementById("card-errors");
+  eCard.className = "stat-card " + (semErrs > 0 ? "error" : semWarn > 0 ? "warn" : "success");
+
+  // Semantic tab badge
+  const semBadge = document.getElementById("sem-tab-badge");
+  if (semBadge) semBadge.textContent = totalIssues;
+}
+function setStatVal(id, v) {
+  const el = document.getElementById(id);
+  if (el) { el.textContent = v; el.classList.add("fade-in"); }
+}
+
+/* ─── Tab Routing ────────────────────────────────────── */
+function renderCurrentTab() {
+  switch (currentTab) {
+    case "tokens":    renderTokens();    break;
+    case "ast":       renderAST();       break;
+    case "gcc":       renderGCC();       break;
+    case "pycparser": renderPycparser(); break;
+    case "metrics":   renderMetrics();  break;
+    case "semantic":  renderSemantic(); break;
+  }
+}
+
+document.getElementById("tab-bar").addEventListener("click", e => {
+  const tab = e.target.closest("[data-tab]");
+  if (!tab) return;
+  currentTab = tab.dataset.tab;
+  document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
+  tab.classList.add("active");
+  document.querySelectorAll(".tab-pane").forEach(p => {
+    const isActive = p.id === `tab-${currentTab}`;
+    p.classList.toggle("hidden", !isActive);
+  });
+  if (lastResult) renderCurrentTab();
+});
+
+/* ─── Tokens ─────────────────────────────────────────── */
+function renderTokens() {
+  if (!lastResult) return;
+  const tokens = lastResult.tokens || [];
+  const empty   = document.getElementById("tok-empty");
+  const wrapper = document.getElementById("tok-table-wrap");
+
+  if (!tokens.length) {
+    empty.classList.remove("hidden"); wrapper.classList.add("hidden"); return;
+  }
+  empty.classList.add("hidden"); wrapper.classList.remove("hidden");
+
+  document.getElementById("tok-tbody").innerHTML = tokens.map(t =>
+    `<tr class="token-row">
+      <td class="token-line">${t.line}</td>
+      <td><span class="badge badge-${t.type.toLowerCase()}">${t.type}</span></td>
+      <td class="token-value"><code>${esc(t.value)}</code></td>
+    </tr>`
+  ).join("");
+  document.getElementById("tok-badge").textContent = tokens.length;
+}
+
+/* ─── AST ────────────────────────────────────────────── */
+function buildASTHTML(node) {
+  if (!node) return "";
+  const val = (node.value !== null && node.value !== undefined)
+    ? `<span class="ast-value">${esc(String(node.value))}</span>` : "";
+  const kids = node.children || [];
+
+  if (!kids.length) {
+    return `<div class="ast-leaf">
+      <span class="ast-type">${node.type}</span>${val}
+    </div>`;
+  }
+  return `<details open class="ast-node">
+    <summary class="ast-summary">
+      <span class="ast-type">${node.type}</span>${val}
+      <span class="ast-child-count">${kids.length} child${kids.length !== 1 ? "ren" : ""}</span>
+    </summary>
+    <div class="ast-children">${kids.map(buildASTHTML).join("")}</div>
+  </details>`;
+}
+
+function renderAST() {
+  const tree = document.getElementById("ast-tree");
+  const ctrl = document.getElementById("ast-ctrls");
+  if (!lastResult || !lastResult.ast) {
+    tree.innerHTML = `<div class="empty-state"><div class="empty-icon">🌲</div><span>No AST (parse error?)</span></div>`;
+    ctrl.style.display = "none"; return;
+  }
+  tree.innerHTML = buildASTHTML(lastResult.ast);
+  ctrl.style.display = "flex";
+}
+function expandAllAST()   { document.querySelectorAll("#ast-tree details").forEach(d => d.open = true); }
+function collapseAllAST() { document.querySelectorAll("#ast-tree details").forEach(d => d.open = false); }
+
+/* ─── GCC ────────────────────────────────────────────── */
+function renderGCC() {
+  const el = document.getElementById("gcc-content");
+  if (!lastResult || !lastResult.gcc) {
+    el.innerHTML = `<div class="empty-state"><div class="empty-icon">🔨</div><span>No GCC data</span></div>`;
+    return;
+  }
+  const g = lastResult.gcc;
+  const cls  = g.ok ? "success" : (g.gcc_found ? "error" : "warning");
+  const icon = g.ok ? "✓" : (g.gcc_found ? "✗" : "⚠");
+  const head = g.ok ? "Compilation Passed" : (g.gcc_found ? "Compilation Failed" : "GCC Not Found");
+
+  document.getElementById("gcc-tab-badge").textContent = g.ok ? "✓" : "✗";
+  document.getElementById("gcc-status").textContent =
+    `GCC: ${g.gcc_found ? (g.ok ? "✓ Pass" : "✗ Fail") : "⚠ Not Found"}`;
+
+  el.innerHTML = `
+    <div class="check-result ${cls}">
+      <div class="check-badge">${icon}</div>
+      <div class="check-info">
+        <h3>${head}</h3>
+        ${g.gcc_found ? `<p>Exit code: ${g.return_code}</p>` : "<p>Install GCC and add it to PATH.</p>"}
+      </div>
+    </div>
+    ${g.stderr ? `<div class="check-output"><h4>Compiler Output</h4>
+      <pre class="error-output">${esc(g.stderr)}</pre></div>` : ""}
+    ${g.stdout ? `<div class="check-output"><h4>stdout</h4>
+      <pre class="normal-output">${esc(g.stdout)}</pre></div>` : ""}
+    <div class="check-output"><h4>Command Run</h4>
+      <code class="cmd">${esc((g.command || []).join(" "))}</code>
+    </div>
+    ${!g.gcc_found ? `<div class="install-hint"><h4>How to Install GCC</h4><ul>
+      <li>Windows: <a href="https://www.mingw-w64.org/" target="_blank">MinGW-w64</a> / WSL</li>
+      <li>macOS: <code>brew install gcc</code></li>
+      <li>Linux: <code>sudo apt install gcc</code></li>
+    </ul></div>` : ""}`;
+}
+
+/* ─── pycparser ──────────────────────────────────────── */
+function renderPycparser() {
+  const el = document.getElementById("pyc-content");
+  if (!lastResult || !lastResult.pycparser) {
+    el.innerHTML = `<div class="empty-state"><div class="empty-icon">🧩</div><span>No pycparser data</span></div>`;
+    return;
+  }
+  const p   = lastResult.pycparser;
+  const cls = p.ok ? "success" : "error";
+  const icon = p.ok ? "✓" : "✗";
+  const head = p.ok ? "Parse Successful" : "Parse Failed";
+
+  document.getElementById("pyc-status").textContent = `pycparser: ${p.ok ? "✓ Pass" : "✗ Fail"}`;
+
+  el.innerHTML = `
+    <div class="check-result ${cls}">
+      <div class="check-badge">${icon}</div>
+      <div class="check-info">
+        <h3>${head}</h3>
+        <p>Full C grammar · no preprocessing</p>
+      </div>
+    </div>
+    ${p.error ? `<div class="check-output"><h4>Error Detail</h4>
+      <pre class="error-output">${esc(p.error)}</pre></div>` : ""}
+    ${p.ok && p.ast ? `<div class="check-output"><h4>pycparser AST</h4>
+      <div class="ast-tree">${buildASTHTML(normPycAST(p.ast))}</div></div>` : ""}`;
+}
+
+function normPycAST(n) {
+  if (!n) return null;
+  return {
+    type: n.type || "Node",
+    value: n.name || n.op || n.value || null,
+    children: (n.children || []).map(c => normPycAST(c && c.node)).filter(Boolean),
+  };
+}
+
+/* ─── Metrics ────────────────────────────────────────── */
+const TOKEN_COLORS = {
+  KEYWORD:"#bc8cff", IDENTIFIER:"#58a6ff", NUMBER:"#e3b341",
+  STRING:"#3fb950", OPERATOR:"#f85149", SYMBOL:"#8b949e",
+  PREPROCESSOR:"#ffa64d", CHAR:"#64d2ff",
+};
+
+function renderMetrics() {
+  const el = document.getElementById("metrics-content");
+  if (!lastResult || !lastResult.metrics) {
+    el.innerHTML = `<div class="empty-state"><div class="empty-icon">📊</div><span>No metrics yet</span></div>`;
+    return;
+  }
+  const m     = lastResult.metrics;
+  const tc    = m.token_counts || {};
+  const total = m.total_tokens || 1;
+
+  const bars = Object.entries(tc).map(([type, count]) => {
+    const pct   = ((count / total) * 100).toFixed(1);
+    const color = TOKEN_COLORS[type] || "#8b949e";
+    return `<div class="metric-bar-row">
+      <div class="metric-bar-label">
+        <span class="badge badge-${type.toLowerCase()}">${type}</span>
+        <span>${count} (${pct}%)</span>
+      </div>
+      <div class="metric-bar-bg">
+        <div class="metric-bar-fill" style="width:${pct}%;background:${color}"></div>
+      </div>
+    </div>`;
+  }).join("");
+
+  const fns  = m.functions || [];
+  const vars = m.variables || [];
+
+  el.innerHTML = `<div class="metrics-grid">
+    <div class="metric-section">
+      <h4>Token Distribution</h4>
+      <div class="metric-bars">${bars || '<p class="muted">No tokens</p>'}</div>
+    </div>
+    <div class="metric-section">
+      <h4>Code Statistics</h4>
+      <div class="stat-list">
+        <div class="stat-item"><span>Total Tokens</span><span class="stat-num">${m.total_tokens}</span></div>
+        <div class="stat-item"><span>AST Depth</span><span class="stat-num">${m.ast_depth}</span></div>
+        <div class="stat-item"><span>Functions</span><span class="stat-num">${fns.length}</span></div>
+        <div class="stat-item"><span>Variables</span><span class="stat-num">${vars.length}</span></div>
+      </div>
+    </div>
+    ${fns.length ? `<div class="metric-section">
+      <h4>Functions Detected</h4>
+      <div class="name-list">${fns.map(f => `<span class="code-badge">${esc(f)}()</span>`).join("")}</div>
+    </div>` : ""}
+    ${vars.length ? `<div class="metric-section">
+      <h4>Variables Declared</h4>
+      <div class="name-list">${vars.map(v => `<span class="code-badge">${esc(v)}</span>`).join("")}</div>
+    </div>` : ""}
+  </div>`;
+}
+
+/* ─── Semantic Analysis ──────────────────────────────── */
+let _semFilter = "all";
+
+function renderSemantic() {
+  const el = document.getElementById("semantic-content");
+  if (!lastResult || !lastResult.semantic) {
+    el.innerHTML = `<div class="empty-state"><div class="empty-icon">🔎</div><span>No semantic data</span></div>`;
+    return;
+  }
+  const sem = lastResult.semantic;
+  const q   = sem.quality || {};
+  const issues = sem.issues || [];
+  const syms   = sem.symbol_table || [];
+
+  el.innerHTML = `<div class="semantic-layout">
+    <div>
+      <div class="issue-filter-bar">
+        <span>Filter:</span>
+        <button class="filter-btn ${_semFilter==='all'?'active':''}" onclick="setSemFilter('all')">All (${issues.length})</button>
+        <button class="filter-btn ${_semFilter==='ERROR'?'active':''}" onclick="setSemFilter('ERROR')">Errors (${issues.filter(i=>i.kind==='ERROR').length})</button>
+        <button class="filter-btn ${_semFilter==='WARNING'?'active':''}" onclick="setSemFilter('WARNING')">Warnings (${issues.filter(i=>i.kind==='WARNING').length})</button>
+      </div>
+      <div id="issues-list">${buildIssuesHTML(issues)}</div>
+      <div class="symtable-card" style="margin-top:.75rem">
+        <h4>Symbol Table</h4>
+        ${buildSymTableHTML(syms)}
+      </div>
+    </div>
+    <div>
+      ${buildQualityHTML(q)}
+    </div>
+  </div>`;
+}
+
+function setSemFilter(f) { _semFilter = f; renderSemantic(); }
+
+function buildIssuesHTML(issues) {
+  const filtered = _semFilter === "all" ? issues : issues.filter(i => i.kind === _semFilter);
+  if (!filtered.length) return `<div class="empty-state"><div class="empty-icon">✅</div><span>No issues found — great code!</span></div>`;
+  return filtered.map(i => `
+    <div class="issue-card kind-${esc(i.kind)}">
+      <div class="issue-header">
+        <span class="issue-icon">${i.kind === "ERROR" ? "❌" : "⚠️"}</span>
+        <span class="issue-code ${esc(i.kind)}">${esc(i.code)}</span>
+        <span class="issue-line">Line ${i.line || "?"}</span>
+      </div>
+      <div class="issue-message">${esc(i.message)}</div>
+      ${i.hint ? `<div class="issue-hint">💡 ${esc(i.hint)}</div>` : ""}
+    </div>`).join("");
+}
+
+function buildQualityHTML(q) {
+  if (!q || q.score == null) return `<div class="quality-card"><div class="empty-state"><span>No quality data</span></div></div>`;
+  const color = q.color || "#8b949e";
+  const breakdown = (q.breakdown || []).filter(b => b.count > 0);
+  return `<div class="quality-card">
+    <h4>Code Quality Score</h4>
+    <div class="quality-score-num" style="color:${color}">${q.score}</div>
+    <div class="quality-grade" style="color:${color}">Grade ${q.grade}</div>
+    <div class="quality-summary">${esc(q.summary)}</div>
+    ${breakdown.length ? `<div class="quality-breakdown">
+      ${breakdown.map(b => `<div class="qb-row"><span>${esc(b.label)}</span><span class="qb-num">${b.count}</span></div>`).join("")}
+    </div>` : ""}
+  </div>`;
+}
+
+function buildSymTableHTML(syms) {
+  if (!syms.length) return `<div style="padding:.5rem .75rem;font-size:.78rem;color:var(--text-muted)">No user-defined symbols.</div>`;
+  return `<table class="sym-table">
+    <thead><tr><th>Name</th><th>Type</th><th>Scope</th><th>Line</th><th>Used</th><th>Assigned</th></tr></thead>
+    <tbody>${syms.map(s => `<tr>
+      <td style="color:var(--accent-2)">${esc(s.name)}</td>
+      <td>${esc(s.type)}</td>
+      <td>${s.scope_level}</td>
+      <td>${s.declared_line}</td>
+      <td class="${s.used ? 'sym-ok' : 'sym-bad'}">${s.used ? "✓" : "✗"}</td>
+      <td class="${s.assigned ? 'sym-ok' : 'sym-bad'}">${s.assigned ? "✓" : "✗"}</td>
+    </tr>`).join("")}</tbody>
+  </table>`;
+}
+
+/* ─── Status Bar ─────────────────────────────────────── */
+function updateStatusBar(data, elapsed) {
+  const errs = (data.errors || []).length;
+  document.getElementById("status-msg").textContent =
+    errs ? `⚠ Completed with ${errs} error(s) in ${elapsed}s`
+         : `✓ Analysis complete — ${elapsed}s`;
+  document.getElementById("analyze-time").textContent = elapsed + "s";
+}
+
+/* ─── Errors ─────────────────────────────────────────── */
+function showErrors(errors) {
+  const panel = document.getElementById("errors-panel");
+  document.getElementById("errors-list").innerHTML =
+    errors.map(e => `<li>${esc(e)}</li>`).join("");
+  panel.classList.remove("hidden");
+}
+function hideErrors() {
+  document.getElementById("errors-panel").classList.add("hidden");
+}
+
+/* ─── History ────────────────────────────────────────── */
+async function loadHistory() {
+  try {
+    const res = await fetch("/history");
+    renderHistory(await res.json());
+  } catch (_) {}
+}
+function renderHistory(history) {
+  const list = document.getElementById("history-list");
+  if (!history || !history.length) {
+    list.innerHTML = `<div class="empty-state"><span>No history yet</span></div>`; return;
+  }
+  list.innerHTML = history.map(item => `
+    <div class="history-item">
+      <div class="history-meta">
+        <span class="history-time">${fmtTime(item.timestamp)}</span>
+        <span class="badge ${item.errors.length ? "badge-error" : "badge-success"}">
+          ${item.errors.length ? "Error" : "OK"}
+        </span>
+      </div>
+      <div class="history-preview">${esc(item.source_preview)}</div>
+      <div class="history-stats">Tokens: ${item.token_count} · GCC: ${item.gcc_ok ? "✓" : "✗"}</div>
+    </div>`
+  ).join("");
+}
+async function clearHistory() {
+  await fetch("/history/clear", { method: "POST" });
+  loadHistory();
+}
+
+/* ─── Export ─────────────────────────────────────────── */
+function exportData(type) {
+  if (!lastResult) { alert("Run an analysis first."); return; }
+  const payloads = { tokens: lastResult.tokens, ast: lastResult.ast, full: lastResult };
+  const names    = { tokens: "tokens.json", ast: "ast.json", full: "analysis_report.json" };
+  const blob = new Blob([JSON.stringify(payloads[type], null, 2)], { type: "application/json" });
+  const a = Object.assign(document.createElement("a"), { href: URL.createObjectURL(blob), download: names[type] });
+  a.click(); URL.revokeObjectURL(a.href);
+  document.getElementById("export-menu").classList.add("hidden");
+}
+
+/* ─── Loading state ──────────────────────────────────── */
+function setLoading(on) {
+  analyzeBtn.disabled = on;
+  analyzeBtn.textContent = on ? "⟳ Analyzing…" : "⚡ Analyze";
+  document.getElementById("status-dot").className = "status-dot " + (on ? "loading" : "ready");
+}
+
+/* ─── Line numbers ───────────────────────────────────── */
+function updateLineNumbers() {
+  const lines = codeEditor.value.split("\n");
+  lineNumbers.innerHTML = lines.map((_, i) => `<span>${i + 1}</span>`).join("\n");
+  document.getElementById("char-count").textContent = `${codeEditor.value.length} chars`;
+}
+codeEditor.addEventListener("input", updateLineNumbers);
+codeEditor.addEventListener("scroll", () => { lineNumbers.scrollTop = codeEditor.scrollTop; });
+codeEditor.addEventListener("keyup", () => {
+  const txt = codeEditor.value, pos = codeEditor.selectionStart;
+  const before = txt.substring(0, pos).split("\n");
+  document.getElementById("cursor-pos").textContent =
+    `Ln ${before.length}, Col ${before[before.length - 1].length + 1}`;
+});
+
+/* ─── Preset selector ────────────────────────────────── */
+document.getElementById("preset-select").addEventListener("change", e => {
+  const code = PRESETS[e.target.value];
+  if (code) { codeEditor.value = code; updateLineNumbers(); }
+  e.target.value = "";
+});
+
+/* ─── Keyboard shortcut ──────────────────────────────── */
+document.addEventListener("keydown", e => {
+  if ((e.ctrlKey || e.metaKey) && e.key === "Enter") { e.preventDefault(); analyzeCode(); }
+});
+
+/* ─── File Upload ────────────────────────────────────── */
+document.getElementById("file-upload").addEventListener("change", function () {
+  const file = this.files[0];
+  if (!file) return;
+
+  const allowed = [".c", ".h", ".txt"];
+  const ext = file.name.slice(file.name.lastIndexOf(".")).toLowerCase();
+  if (!allowed.includes(ext)) {
+    showErrors([`Unsupported file type "${ext}". Please upload a .c, .h, or .txt file.`]);
+    this.value = "";
+    return;
+  }
+
+  const reader = new FileReader();
+  reader.onload = function (e) {
+    codeEditor.value = e.target.result;
+    updateLineNumbers();
+    // Update footer filename display
+    const footer = document.getElementById("editor-lang");
+    if (footer) footer.textContent = file.name;
+    hideErrors();
+    // Auto-analyze after load
+    analyzeCode();
+  };
+  reader.onerror = () => showErrors(["Failed to read file."]);
+  reader.readAsText(file);
+  this.value = ""; // reset so same file can be re-uploaded
+});
+
+/* ─── Analyze button ─────────────────────────────────── */
+analyzeBtn.addEventListener("click", analyzeCode);
+
+
+/* ─── Export dropdown ────────────────────────────────── */
+document.getElementById("export-btn").addEventListener("click", () => {
+  document.getElementById("export-menu").classList.toggle("hidden");
+});
+document.addEventListener("click", e => {
+  if (!e.target.closest(".export-wrapper"))
+    document.getElementById("export-menu").classList.add("hidden");
+});
+
+/* ─── History drawer ─────────────────────────────────── */
+document.getElementById("btn-history").addEventListener("click", () => {
+  document.getElementById("history-drawer").classList.remove("hidden");
+  document.getElementById("drawer-overlay").classList.remove("hidden");
+  loadHistory();
+});
+function closeDrawer() {
+  document.getElementById("history-drawer").classList.add("hidden");
+  document.getElementById("drawer-overlay").classList.add("hidden");
+}
+document.getElementById("close-drawer").addEventListener("click", closeDrawer);
+document.getElementById("drawer-overlay").addEventListener("click", closeDrawer);
+
+/* ─── Helpers ────────────────────────────────────────── */
+function esc(s) {
+  return String(s)
+    .replace(/&/g,"&amp;").replace(/</g,"&lt;")
+    .replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+}
+function fmtTime(iso) {
+  try { return new Date(iso).toLocaleTimeString(); } catch(_) { return iso; }
+}
+
+/* ─── Init ───────────────────────────────────────────── */
+updateLineNumbers();
+</script>
 </body>
 </html>
-

@@ -1,0 +1,1265 @@
+================================================================================
+         SMART STATIC CODE ANALYZER — COMPLETE PROJECT DOCUMENTATION
+================================================================================
+         Project: Smart Static Code Analyzer and Error Eliminator
+         Language: C-Like Language Subset
+         Platform: Python (Flask) + HTML/CSS/JavaScript
+         Date: April 2026
+================================================================================
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+TABLE OF CONTENTS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  1.  Project Overview
+  2.  Project Folder Structure
+  3.  Full Pipeline (How Code Flows Through the System)
+  4.  File-by-File Documentation
+       4.01  app.py
+       4.02  lexer.py
+       4.03  parser.py
+       4.04  ast_nodes.py
+       4.05  utils.py
+       4.06  semantic/__init__.py
+       4.07  semantic/symbol_table.py
+       4.08  semantic/analyzer.py
+       4.09  semantic/quality_scorer.py
+       4.10  analyzer/ast_parser.py
+       4.11  compiler/compile_checker.py
+       4.12  templates/index.html
+       4.13  static/style.css
+  5.  Feature Implementation Details
+       5.01  Lexer (Phase 2)
+       5.02  Parser & Grammar (Phases 1 & 3)
+       5.03  AST Generation (Phase 4)
+       5.04  Symbol Table (Phase 5)
+       5.05  Semantic Analyser (Phase 6)
+       5.06  Static Bug Detector (Phase 7)
+       5.07  Feature Extraction from AST (Phase 8)
+       5.08  Code Quality Scoring (Phase 9)
+       5.09  Report Generation & UI (Phase 10)
+       5.10  File Upload Feature
+       5.11  History Tracking
+       5.12  Export Feature
+       5.13  GCC Integration
+       5.14  pycparser Integration
+  6.  Semantic Error Types — Full Description
+  7.  API Endpoints Reference
+  8.  How to Run the Project
+  9.  Summary of All 10 Phases
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+1. PROJECT OVERVIEW
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+The Smart Static Code Analyzer is a web-based tool that analyses C-like source
+code WITHOUT executing it. It simulates all major compiler phases:
+
+    LEXICAL ANALYSIS  →  SYNTAX ANALYSIS  →  AST GENERATION
+    →  SYMBOL TABLE  →  SEMANTIC ANALYSIS  →  QUALITY SCORING
+    →  REPORT GENERATION
+
+The tool detects:
+  - Undeclared variables
+  - Redeclared variables in the same scope
+  - Unused variables
+  - Unreachable code (after return statements)
+  - Variables used before being assigned a value
+
+It also provides:
+  - Token-level view of the source code
+  - Visual AST (Abstract Syntax Tree) browser
+  - GCC-based syntax validation
+  - pycparser-based C grammar validation
+  - Code metrics (token counts, AST depth, function/variable lists)
+  - A 0-100 quality score with letter grade (A to F)
+  - A symbol table showing every variable's scope, usage and assignment status
+  - History of the last 20 analyses
+  - Export to JSON
+  - File upload support (.c / .h / .txt)
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+2. PROJECT FOLDER STRUCTURE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  smart_static_analyzer/
+  │
+  ├── app.py                      ← Flask server, main pipeline, API endpoints
+  ├── lexer.py                    ← Lexical analyser (tokenizer)
+  ├── parser.py                   ← Recursive descent parser, AST builder
+  ├── ast_nodes.py                ← AST node data classes and factory functions
+  ├── utils.py                    ← Helper functions (AST/token serialization)
+  ├── requirements.txt            ← Python dependencies
+  │
+  ├── semantic/                   ← Semantic analysis package
+  │   ├── __init__.py             ← Package exports
+  │   ├── symbol_table.py         ← Scope-based symbol table
+  │   ├── analyzer.py             ← Semantic analyser (AST visitor)
+  │   └── quality_scorer.py      ← Code quality scoring (A-F grading)
+  │
+  ├── analyzer/                   ← pycparser integration
+  │   └── ast_parser.py          ← Secondary C grammar validation
+  │
+  ├── compiler/                   ← GCC integration
+  │   └── compile_checker.py     ← GCC syntax-only check (-fsyntax-only)
+  │
+  ├── templates/
+  │   └── index.html             ← Full dashboard UI (single-page app)
+  │
+  └── static/
+      └── style.css              ← Complete design system (light/green theme)
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+3. FULL PIPELINE — HOW CODE FLOWS THROUGH THE SYSTEM
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  User types or uploads C-like source code in the browser
+          │
+          ▼
+  Browser sends POST /analyze  (JSON: { "code": "..." })
+          │
+          ▼
+  app.py receives the request
+          │
+          ├──▶ lexer.lex(source)
+          │         Converts source text into a list of Token objects
+          │         Each token has: type, value, line number
+          │
+          ├──▶ parser.parse(tokens)
+          │         Validates token sequence against the C-like grammar
+          │         Builds and returns an AST (Abstract Syntax Tree) if valid
+          │         Raises ParseError if syntax is wrong
+          │
+          ├──▶ _compute_metrics(tokens, ast)
+          │         Counts token types, extracts variable/function names,
+          │         measures AST depth
+          │
+          ├──▶ SemanticAnalyzer().analyze(ast)
+          │         Walks the entire AST node by node
+          │         Maintains a symbol table with scopes
+          │         Detects: UNDECLARED_VAR, REDECLARATION, UNUSED_VAR,
+          │                  UNINITIALIZED_USE, UNREACHABLE_CODE
+          │         Returns a SemanticResult with all issues + symbol table
+          │
+          ├──▶ compute_quality(issues)
+          │         Calculates score: 100 - (15 × errors) - (5 × warnings)
+          │         Assigns letter grade A/B/C/D/F and color
+          │
+          ├──▶ check_with_gcc(source)
+          │         Runs: gcc -fsyntax-only -x c - < source
+          │         Returns OK or error messages from real GCC compiler
+          │
+          ├──▶ parse_with_pycparser(source)
+          │         Strips preprocessor lines, runs pycparser C grammar check
+          │         Returns OK or detailed parse error
+          │
+          └──▶ Returns full JSON response to browser:
+                    {
+                      tokens:    [...],
+                      ast:       {...},
+                      metrics:   {...},
+                      semantic:  { issues, symbol_table, quality },
+                      gcc:       { ok, output },
+                      pycparser: { ok, output },
+                      errors:    [...]
+                    }
+
+  Browser renders each section in the appropriate tab of the dashboard.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+4. FILE-BY-FILE DOCUMENTATION
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+────────────────────────────────────────────────────────────────────────────────
+4.01  app.py  —  Flask Web Server & Main Pipeline Controller
+────────────────────────────────────────────────────────────────────────────────
+
+  PURPOSE:
+    Acts as the backbone of the application. Handles HTTP requests, runs all
+    analysis modules in sequence, and returns the combined result as JSON.
+
+  KEY CONTENTS:
+    - Flask app initialization with template and static folder config
+    - _history (deque, maxlen=20): in-memory store for recent analyses
+    - _compute_metrics(tokens, ast_root):
+        Counts each token type using Python's Counter
+        Walks the AST recursively to find variable names, function names
+        Calculates maximum AST depth (depth of the deepest nested node)
+    - GET  /        : Renders index.html (the dashboard)
+    - POST /analyze : Full analysis pipeline (see Section 3)
+    - GET  /history : Returns last 20 analysis runs as JSON
+    - POST /history/clear : Clears the history deque
+
+  HOW IT IMPORTS:
+    Supports both package-style import (from .lexer import ...) and
+    plain-file import (from lexer import ...) using try/except, making it
+    work whether run directly (python app.py) or as a module.
+
+  DESIGN DECISION:
+    All analysis passes run sequentially even if one fails, so the user
+    always gets as much information as possible. For example, if the custom
+    parser fails due to a syntax error, GCC and pycparser still run and
+    their results are returned.
+
+────────────────────────────────────────────────────────────────────────────────
+4.02  lexer.py  —  Lexical Analyser (Tokenizer)
+────────────────────────────────────────────────────────────────────────────────
+
+  PURPOSE:
+    Converts raw source code text into a flat list of Token objects.
+    This is "Phase 2" of the compiler pipeline.
+
+  TOKEN TYPES PRODUCED:
+    KEYWORD      — int, void, char, float, double, return, if, else, for,
+                   while, do, break, continue, struct, const, static, ...
+    IDENTIFIER   — any variable or function name (e.g. main, x, count)
+    NUMBER       — integers (42), hex (0xFF), floats (3.14)
+    STRING       — double-quoted string literals ("hello")
+    CHAR         — single-quoted character literals ('a')
+    OPERATOR     — +, -, *, /, %, =, ==, !=, <, >, <=, >=, &&, ||, ++, --
+    SYMBOL       — (, ), {, }, [, ], ;, ,
+    PREPROCESSOR — full lines starting with # (e.g. #include <stdio.h>)
+
+  HOW IT WORKS:
+    The Lexer class reads the source string character by character using
+    an internal position pointer (self.pos) and a current line counter.
+
+    For each character it decides what kind of token to produce:
+      - '#' at start of line → reads entire line as PREPROCESSOR token
+      - '/' followed by '/' → reads to end of line (line comment, skipped)
+      - '/' followed by '*' → reads until '*/' (block comment, skipped)
+      - '"' → reads until closing '"' → STRING token
+      - "'" → reads until closing "'" → CHAR token
+      - digit or '0x' → reads full number → NUMBER token
+      - letter or '_' → reads full word → KEYWORD or IDENTIFIER
+      - Multi-char operators: reads ahead to check for ==, !=, <=, >=,
+                               &&, ||, ++, --, ->
+
+  MULTI-CHARACTER OPERATOR HANDLING:
+    When a '=' is seen, peek at next char: if also '=' → emit '=='
+    Same logic for !, <, >, &, |, +, -
+
+  LINE TRACKING:
+    Every newline character increments self.line so each Token carries
+    an accurate source line number for error reporting.
+
+  ERROR HANDLING:
+    Unknown characters raise LexicalError with the offending char and line.
+
+  lex(source) function:
+    Public entry point. Creates a Lexer instance and calls tokenize().
+    Returns List[Token].
+
+────────────────────────────────────────────────────────────────────────────────
+4.03  parser.py  —  Recursive Descent Parser & AST Builder
+────────────────────────────────────────────────────────────────────────────────
+
+  PURPOSE:
+    Takes the token list from the lexer and checks it against the defined
+    grammar rules. If valid, produces an AST. If invalid, raises ParseError.
+    This covers "Phase 1" (grammar design) and "Phase 3" (parser).
+
+  GRAMMAR SUPPORTED (simplified):
+    Program        → FunctionDefList | StatementList
+    FunctionDef    → TypeKW IDENTIFIER '(' ParamList? ')' Block
+    StatementList  → (PREPROCESSOR | Statement)*
+    Statement      → Declaration | Assignment | Return | Block
+                    | ExpressionStatement
+    Declaration    → TypeKW+ '*'? IDENTIFIER ('[' expr ']')? ('=' expr)? ';'
+    Assignment     → IDENTIFIER '=' Expression ';'
+    Return         → 'return' Expression? ';'
+    Block          → '{' StatementList '}'
+    Expression     → Term (BinaryOp Term)*
+    Term           → IDENTIFIER ['(' ArgList ')'] | NUMBER | STRING | CHAR
+                   | '(' Expression ')' | UnaryOp Term
+    TypeKW         → int | void | char | float | double | long | short
+                   | unsigned | signed
+
+  HOW IT WORKS:
+    The Parser class uses a token list and an index pointer (self.pos).
+
+    _current()  → returns token at self.pos (or None at end)
+    _advance()  → moves self.pos forward by 1
+    _match()    → asserts current token matches expected type/value,
+                  consumes it and returns it; raises ParseError if mismatch
+
+    parse() is the entry point:
+      1. Skips leading PREPROCESSOR tokens
+      2. Peeks ahead: if TypeKW IDENT '(' → calls _parse_function_def()
+      3. Otherwise calls _parse_statement_list()
+
+    Each _parse_X() method handles one grammar rule:
+      _parse_function_def() : consumes return type, name, '(', param list,
+                               ')', then calls _parse_block()
+      _parse_block()        : consumes '{', calls _parse_statement_list(), '}'
+      _parse_statement()    : dispatches based on current token:
+                               TypeKW → _parse_declaration()
+                               IDENT  → _parse_assignment() or expression
+                               return → _parse_return()
+                               {      → _parse_block()
+                               other KW → gracefully skipped
+      _parse_expression()   : left-recursive loop over binary operators
+      _parse_term()         : literals, identifiers, function calls,
+                              parenthesised expressions, unary operators
+
+  LINE NUMBERS:
+    When creating AST nodes, the matched token's .line attribute is passed
+    to the factory function so every node has a line number for semantic
+    error reporting.
+
+  ERROR RECOVERY:
+    Unknown keywords are consumed and skipped gracefully (no hard crash)
+    so the parser can continue and report multiple issues.
+
+  parse(tokens) function:
+    Public entry point. Creates a Parser and returns the root ASTNode.
+
+────────────────────────────────────────────────────────────────────────────────
+4.04  ast_nodes.py  —  AST Node Definitions
+────────────────────────────────────────────────────────────────────────────────
+
+  PURPOSE:
+    Defines the data structure for every node in the Abstract Syntax Tree.
+    All factory functions are here, making node creation consistent.
+
+  ASTNode (dataclass):
+    Fields:
+      type:     str         — node type name (e.g. "Declaration", "BinaryOp")
+      value:    Any|None    — main value (e.g. variable name, operator symbol)
+      children: List[ASTNode] — child nodes (sub-expressions, body, etc.)
+      line:     int         — source line number (0 if unknown)
+
+    Method:
+      add_child(child) — appends a child node to self.children
+
+  FACTORY FUNCTIONS (one per node type):
+    program_node(children)         → root node of the whole program
+    declaration_node(name, line)   → int x; or int x = 5;
+    assignment_node(line)          → x = expr;
+    return_node(line)              → return expr;
+    block_node(children, line)     → { ... }
+    binary_op_node(op, line)       → a + b, x == y, etc.
+    identifier_node(name, line)    → any use of a variable name
+    number_node(value, line)       → literal number
+    string_node(value, line)       → literal string or char
+    function_def_node(name, line)  → int main() { ... }
+    expression_stmt_node(expr)     → standalone expression like printf(...)
+    call_expression_node(callee)   → function call: foo(a, b)
+
+  WHY FACTORY FUNCTIONS:
+    They ensure every node is created consistently. The parser never
+    creates ASTNode(...) directly — it always uses a factory, making
+    the code readable and easy to refactor.
+
+────────────────────────────────────────────────────────────────────────────────
+4.05  utils.py  —  Serialization Helpers
+────────────────────────────────────────────────────────────────────────────────
+
+  PURPOSE:
+    Converts Python objects (AST nodes, Token lists) into plain dictionaries
+    so Flask can serialize them to JSON for the browser.
+
+  FUNCTIONS:
+    ast_to_dict(node):
+      Recursively converts an ASTNode tree into nested dicts:
+      { type, value, line, children: [...] }
+      The browser's JavaScript reads this to render the AST tab.
+
+    tokens_to_list(tokens):
+      Converts List[Token] into List[dict]:
+      [{ type, value, line }, ...]
+      Used to populate the Tokens tab in the UI.
+
+────────────────────────────────────────────────────────────────────────────────
+4.06  semantic/__init__.py  —  Semantic Package Exports
+────────────────────────────────────────────────────────────────────────────────
+
+  PURPOSE:
+    Makes the semantic/ directory a Python package and re-exports the main
+    classes so app.py can do:
+      from semantic.analyzer import SemanticAnalyzer, SemanticResult
+      from semantic.quality_scorer import compute_quality
+
+────────────────────────────────────────────────────────────────────────────────
+4.07  semantic/symbol_table.py  —  Symbol Table
+────────────────────────────────────────────────────────────────────────────────
+
+  PURPOSE:
+    Tracks every variable and function declared in the program, organized
+    by scope. Enables the semantic analyser to check if a variable exists,
+    whether it's been used, and whether it's been assigned.
+    This is "Phase 5" of the compiler pipeline.
+
+  SYMBOL DATACLASS:
+    Fields:
+      name, type_, scope_level, declared_line
+      used: bool         — True if the variable was ever read
+      assigned: bool     — True if the variable was ever assigned a value
+      used_line, assigned_line: int|None — where first use/assignment occurred
+
+    Method:
+      to_dict() — converts to plain dict for JSON serialisation
+
+  BUILTINS:
+    A set of common C library function names (printf, scanf, malloc, strlen,
+    fopen, exit, etc.) are pre-populated in the global scope, marked as
+    used=True and assigned=True. This prevents false "undeclared" errors
+    when code calls standard library functions.
+
+  SymbolTable CLASS:
+    Data structure: List[Dict[str, Symbol]]  (stack of scope dictionaries)
+    self.level: int — current nesting depth (0 = global)
+
+    enter_scope():
+      Called when the analyser enters a new block { }.
+      Pushes an empty dict onto the stack. Increments self.level.
+
+    exit_scope() → dict:
+      Called when the analyser exits a block.
+      Pops and returns the scope dict (so caller can check for unused vars).
+      Decrements self.level.
+
+    declare(name, type_, line) → "OK" | "REDECLARATION":
+      Checks if name already exists in the CURRENT scope dict (not outer ones).
+      If yes → returns "REDECLARATION" without overwriting.
+      If no  → creates a new Symbol and stores it. Returns "OK".
+
+    lookup(name) → Symbol | None:
+      Searches scope stack from innermost to outermost.
+      Returns the first Symbol found, or None if not declared anywhere.
+      This is how "inner scope shadows outer scope" is handled.
+
+    mark_used(name, line):
+      Finds the symbol (from innermost scope outward) and sets used=True.
+      Records the line of first use.
+
+    mark_assigned(name, line):
+      Same as mark_used but sets assigned=True.
+
+    to_list() → List[dict]:
+      Returns all non-builtin symbols across all scopes for display
+      in the Symbol Table UI panel.
+
+────────────────────────────────────────────────────────────────────────────────
+4.08  semantic/analyzer.py  —  Semantic Analyser
+────────────────────────────────────────────────────────────────────────────────
+
+  PURPOSE:
+    Walks the AST and enforces semantic rules, using the symbol table to
+    track variable state. Detects all five categories of semantic issues.
+    This covers "Phase 6" (semantic analysis) and "Phase 7" (bug detection).
+
+  SemanticIssue DATACLASS:
+    kind:     "ERROR" or "WARNING"
+    code:     issue code string (e.g. "UNDECLARED_VAR")
+    message:  human-readable description
+    line:     source line number
+    variable: name of the variable involved (if any)
+
+    hint():  returns a fix suggestion for the specific error code,
+             with the variable name substituted in (e.g. "Declare 'x'
+             before using it, e.g. int x;")
+
+    to_dict(): converts to plain dict for JSON
+
+  SemanticResult DATACLASS:
+    issues:       List[SemanticIssue]
+    symbol_table: SymbolTable (final state after analysis)
+
+    Properties:
+      errors   → issues where kind == "ERROR"
+      warnings → issues where kind == "WARNING"
+
+    to_dict(): produces the full semantic JSON block
+
+  SemanticAnalyzer CLASS:
+    Entry point: analyze(ast_root)
+      Calls _visit(root), then checks global scope for unused variables.
+      Returns a SemanticResult.
+
+    Visitor dispatch: _visit(node)
+      Builds method name: f"_v_{node.type.lower()}"
+      Calls that method if it exists, or falls back to _v_children.
+      This is the "Visitor Pattern" used in real compilers.
+
+    NODE VISITORS:
+
+    _v_program(node):
+      Visits each top-level child (function defs or statements).
+
+    _v_functiondef(node):
+      Declares the function name in the current scope.
+      Calls enter_scope() to start the function body scope.
+      Visits the Block child via _visit_block_stmts() directly.
+      On exit: pops scope, checks unused variables.
+
+    _v_block(node):
+      Calls enter_scope() for the new nested block.
+      Calls _visit_block_stmts() for the statements inside.
+      On exit: pops scope, checks unused variables.
+
+    _visit_block_stmts(node):
+      Iterates statements in order.
+      If a Return node was already seen, the next statement is
+      UNREACHABLE — emits UNREACHABLE_CODE warning and stops.
+      Otherwise visits each statement normally.
+
+    _v_declaration(node):
+      Calls symbol_table.declare(name, "int", line).
+      If result is "REDECLARATION" → emits REDECLARATION error.
+      If the declaration has an initialiser child (e.g. int x = 5):
+        visits the initialiser expression (checks any identifiers it uses)
+        calls mark_assigned(name) — the variable now has a value.
+
+    _v_assignment(node):
+      LEFT side (children[0] = Identifier node):
+        Looks up variable in symbol table.
+        If not found → emits UNDECLARED_VAR error.
+        If found → calls mark_assigned(name).
+        (Does NOT call mark_used — being assigned ≠ being read.)
+      RIGHT side (children[1] = expression):
+        Visits normally — identifiers here trigger _v_identifier.
+
+    _v_identifier(node):
+      Called whenever a variable NAME appears in an expression (i.e. it's
+      being READ, not written to).
+      Looks up variable:
+        Not found → UNDECLARED_VAR error.
+        Found but not assigned (and not a function/builtin) →
+                  UNINITIALIZED_USE warning.
+        Found → mark_used(name, line).
+
+    _v_return(node):
+      Simply visits the return expression (if any).
+      The UNREACHABLE detection happens in _visit_block_stmts, not here.
+
+    _v_callexpression(node):
+      Looks up the function name — if not found → UNDECLARED_VAR warning.
+      Visits all argument expressions.
+
+    _v_binaryop, _v_number, _v_string, _v_expressionstatement:
+      Either visit children or do nothing (for literals).
+
+    _check_unused(scope):
+      Called when a scope is exited.
+      For each Symbol in that scope:
+        Skip builtins and function names.
+        If used == False → emit UNUSED_VAR warning.
+
+    _err(), _warn() helpers:
+      Build SemanticIssue objects.
+      _warn() also deduplicates — won't add the same code+var+line twice.
+
+────────────────────────────────────────────────────────────────────────────────
+4.09  semantic/quality_scorer.py  —  Code Quality Scorer
+────────────────────────────────────────────────────────────────────────────────
+
+  PURPOSE:
+    Takes the list of SemanticIssue objects and computes a numeric quality
+    score and letter grade. This is "Phase 9" of the pipeline.
+
+  SCORING FORMULA:
+    score = 100 − (number_of_errors × 15) − (number_of_warnings × 5)
+    score is clamped between 0 and 100.
+
+  GRADE THRESHOLDS:
+    A : score >= 90  (green)   "Excellent"
+    B : score >= 75  (blue)    "Good"
+    C : score >= 60  (yellow)  "Fair"
+    D : score >= 45  (orange)  "Poor"
+    F : score <  45  (red)     "Critical"
+
+  OUTPUT (dict):
+    {
+      score:             int (0-100),
+      grade:             "A" / "B" / "C" / "D" / "F",
+      color:             hex color string,
+      summary:           human-readable grade label,
+      error_count:       int,
+      warning_count:     int,
+      unreachable_count: int,
+      unused_count:      int,
+      uninit_count:      int,
+      breakdown: [
+        { label: "Semantic Errors",   count: N, points: N*15 },
+        { label: "Warnings",          count: N, points: N*5  },
+        { label: "Unreachable Code",  count: N, points: 0    },
+        { label: "Unused Variables",  count: N, points: 0    },
+        { label: "Uninitialised Use", count: N, points: 0    },
+      ]
+    }
+
+────────────────────────────────────────────────────────────────────────────────
+4.10  analyzer/ast_parser.py  —  pycparser Integration
+────────────────────────────────────────────────────────────────────────────────
+
+  PURPOSE:
+    Provides a second, independent C grammar check using the pycparser
+    Python library (which implements the real C99 grammar).
+
+  HOW IT WORKS:
+    1. Strips all preprocessor lines (#include, #define) from the source
+       because pycparser cannot handle them without a real preprocessor.
+    2. Calls pycparser.CParser().parse() on the cleaned code.
+    3. If parsing succeeds → returns ok=True.
+    4. If CParser raises ParseError → returns ok=False with the error message.
+
+  WHY THIS IS USEFUL:
+    The custom parser handles a simplified grammar. pycparser adds a
+    second opinion using the full C99 standard grammar, catching errors
+    the custom parser might miss.
+
+────────────────────────────────────────────────────────────────────────────────
+4.11  compiler/compile_checker.py  —  GCC Integration
+────────────────────────────────────────────────────────────────────────────────
+
+  PURPOSE:
+    Invokes the system's GCC compiler to perform a real syntax check,
+    without producing any output binary.
+
+  HOW IT WORKS:
+    1. Checks if gcc is available in PATH using shutil.which("gcc").
+    2. If not found → returns a "GCC not installed" warning.
+    3. If found → writes the source code to a temporary file.
+    4. Runs: gcc -fsyntax-only -x c <tempfile>
+       -fsyntax-only : only check syntax, do not compile to object file
+       -x c          : treat file as C language
+    5. Captures stdout and stderr.
+    6. Returns ok=True if return code is 0 (no errors).
+    7. Returns ok=False with full GCC error output if errors were found.
+
+  WHY USEFUL:
+    GCC catches things that the custom parser does not — like type errors,
+    invalid array sizes, and standard library misuse. It provides the
+    "industry-standard" baseline for syntax correctness.
+
+────────────────────────────────────────────────────────────────────────────────
+4.12  templates/index.html  —  Dashboard UI
+────────────────────────────────────────────────────────────────────────────────
+
+  PURPOSE:
+    The entire frontend is a single HTML file. It is a single-page
+    application — no page reloads after the initial load.
+
+  LAYOUT SECTIONS:
+    a) NAVBAR
+       - Brand logo + name + version badge
+       - Navigation buttons (Analyzer, History)
+       - Export dropdown (JSON: tokens, AST, full report)
+       - Online status dot (green = ready, amber = loading)
+
+    b) STATS ROW (5 cards)
+       - Total Tokens
+       - Errors (shows semantic error count, turns red if errors exist)
+       - Functions (count of function definitions found)
+       - Variables (count of declared variables)
+       - AST Depth (max nesting depth of the AST)
+
+    c) WORKSPACE (two-column grid)
+       LEFT PANEL  — Source Code Editor:
+         - Preset dropdown (8 built-in code samples)
+         - "↑ Upload .c" button (file upload)
+         - "⚡ Analyze" button (also Ctrl+Enter shortcut)
+         - Line-numbered textarea (monospace, auto-updating line numbers)
+         - Footer: cursor position, language label, character count
+
+       RIGHT PANEL — Output Tabs:
+         TOKENS tab    : Table of all tokens (type badge, value, line)
+         AST tab       : Interactive collapsible tree of AST nodes
+         GCC tab       : GCC syntax check result + raw output
+         pycparser tab : pycparser check result + raw output
+         Metrics tab   : Token distribution bar chart, code stats, names
+         Semantic tab  : Issue cards + Symbol Table + Quality Score card
+
+    d) ERRORS PANEL
+       Appears below navbar when parse/lex errors occur.
+       Shows red, dismissable list of error messages.
+
+    e) STATUS BAR
+       Shows: analysis status, GCC status, pycparser status, elapsed time.
+
+    f) HISTORY DRAWER
+       Slides in from the right when History button is clicked.
+       Shows last 20 analyses with timestamp, preview, token count,
+       error count, and quality grade.
+
+  JAVASCRIPT — KEY FUNCTIONS:
+    analyzeCode()        : sends POST /analyze, updates all UI sections
+    renderTokens()       : builds the token table HTML
+    renderAST()          : builds the collapsible AST tree HTML
+    renderGCC()          : renders GCC result card
+    renderPycparser()    : renders pycparser result card
+    renderMetrics()      : builds bar chart and stat list
+    renderSemantic()     : renders issue cards, symbol table, quality score
+    buildIssuesHTML()    : generates individual issue card HTML
+    buildQualityHTML()   : generates the score/grade card HTML
+    buildSymTableHTML()  : generates the symbol table HTML
+    updateStats()        : updates the 5 stat cards
+    updateStatusBar()    : updates the bottom status bar
+    updateLineNumbers()  : syncs line numbers with editor content
+    setSemFilter(f)      : filters issue list by ERROR/WARNING/all
+    loadHistory()        : fetches GET /history and renders history drawer
+    clearHistory()       : calls POST /history/clear
+    exportJSON(type)     : triggers JSON file download
+    setLoading(bool)     : shows/hides loading spinner on Analyze button
+
+  FILE UPLOAD (JavaScript):
+    The hidden <input type="file"> is triggered by the Upload button.
+    A FileReader reads the file asynchronously.
+    On load: sets codeEditor.value, updates line numbers, hides errors,
+             auto-calls analyzeCode().
+    Validates extension (.c, .h, .txt only).
+    Resets input so same file can be re-uploaded.
+
+  PRESET SNIPPETS (JavaScript):
+    const PRESETS = { hello, variables, arithmetic, function, complex,
+                      multiline, headers, printf }
+    Each is a ready-made code string loaded into the editor on selection.
+
+────────────────────────────────────────────────────────────────────────────────
+4.13  static/style.css  —  Complete Design System
+────────────────────────────────────────────────────────────────────────────────
+
+  PURPOSE:
+    All styling for every UI component. Uses CSS custom properties (variables)
+    for a consistent design system. Inspired by HackerRank's clean white/green
+    aesthetic.
+
+  DESIGN TOKENS (CSS variables):
+    --bg:           #f7f8fa (light gray page background)
+    --surface:      #ffffff (white for panels and cards)
+    --surface-2:    #f0f2f5 (slightly off-white for sub-sections)
+    --surface-3:    #e8ebee (borders/rows)
+    --border:       #e0e3e8 (standard border)
+    --text:         #1a1d23 (near-black for body text)
+    --text-muted:   #6b7280 (gray for secondary text)
+    --accent:       #2ec866 (HackerRank green — primary actions)
+    --accent-dark:  #21a352 (darker green for hover states)
+    --accent-light: #e8faf0 (light green tint for active states)
+    --error:        #ef4444 (red for errors)
+    --warning:      #f59e0b (amber for warnings)
+    --success:      #2ec866 (same green for success states)
+    --font:         'Inter' (Google Fonts — clean sans-serif)
+    --mono:         'JetBrains Mono' (monospace for code)
+
+  COMPONENT STYLES:
+    .navbar          — sticky top bar with green bottom border
+    .stats-row       — horizontal row of 5 stat cards
+    .stat-card       — individual metric card with hover effect
+    .workspace       — 2-column grid (editor | output)
+    .panel           — white card container with shadow
+    .tab / .tab.active — tabs with green underline on active
+    .token-table     — tokens view table
+    .badge-*         — colorful token type badges
+    .ast-*           — AST tree node/leaf/summary styles
+    .check-result    — GCC/pycparser result card
+    .metric-bar-*    — horizontal bar chart for token distribution
+    .issue-card      — semantic issue card (red border = error, amber = warning)
+    .quality-card    — score/grade display card
+    .sym-table       — symbol table display
+    .btn-upload      — dashed-border upload button that turns green on hover
+    .history-drawer  — right slide-in history panel
+    .empty-state     — centered placeholder when no data yet
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+5. FEATURE IMPLEMENTATION DETAILS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+────────────────────────────────────────────────────────────────────────────────
+5.01  LEXER  (Phase 2)
+────────────────────────────────────────────────────────────────────────────────
+
+  Implementation: lexer.py — class Lexer, method tokenize(), function lex()
+
+  The lexer is a hand-written character-by-character scanner.
+  A central while loop runs until all characters are consumed.
+  Each iteration examines self.source[self.pos] and dispatches to a
+  specialised reader method.
+
+  Special cases handled:
+    - Preprocessor:  '#' at beginning of line → _read_preprocessor()
+                     reads the entire line as one PREPROCESSOR token
+    - Line comment:  '//' → skip characters until '\n'
+    - Block comment: '/*' → skip characters until '*/'
+    - Strings:       '"' → _read_string() reads until next '"'
+    - Chars:         "'" → reads until next "'"
+    - Numbers:       digit → _read_number() handles decimal, hex (0x), float
+    - Identifiers:   letter/_  → _read_word(), then checks against KEYWORDS set
+    - Multi-char ops: '=' → peek for '==' ; '<' → peek for '<=' ; etc.
+
+────────────────────────────────────────────────────────────────────────────────
+5.02  PARSER & GRAMMAR  (Phases 1 & 3)
+────────────────────────────────────────────────────────────────────────────────
+
+  Implementation: parser.py — class Parser, function parse()
+
+  Recursive descent means: one Python function per grammar rule.
+  Each function consumes the tokens it needs and returns an ASTNode.
+
+  The grammar was designed to handle real C code including:
+    - Multiple functions in one file
+    - Nested blocks (if, while bodies are parsed as blocks even without
+      the keywords, since the body grammar is the same)
+    - Function calls with argument lists
+    - Multi-keyword types (unsigned long int, const char*)
+    - Array declarations (int arr[10])
+    - Pointer declarations (int* ptr)
+    - All binary operators and unary operators
+
+  Graceful error skipping:
+    Unknown keywords (like 'if', 'while' which are not fully supported)
+    are consumed token-by-token until ';' or '{' is found, producing
+    an [if…] placeholder node instead of crashing. This lets the rest
+    of the code be parsed and analysed.
+
+────────────────────────────────────────────────────────────────────────────────
+5.03  AST GENERATION  (Phase 4)
+────────────────────────────────────────────────────────────────────────────────
+
+  Implementation: ast_nodes.py + parser.py
+
+  The AST is a tree of ASTNode objects. The parser builds this tree as it
+  recognises each grammar rule. For example:
+
+  Input: int x = a + 5;
+  Produces:
+    Declaration (value="x", line=N)
+      └── BinaryOp (value="+")
+            ├── Identifier (value="a")
+            └── Number (value=5)
+
+  Every node carries a line number so that errors can point to the
+  exact line in the source code.
+
+  The AST is then:
+  1. Walked by the semantic analyser (semantic/analyzer.py)
+  2. Walked by _compute_metrics() in app.py for statistics
+  3. Serialised by utils.ast_to_dict() for the browser's AST tab
+     which renders it as an interactive collapsible tree
+
+────────────────────────────────────────────────────────────────────────────────
+5.04  SYMBOL TABLE  (Phase 5)
+────────────────────────────────────────────────────────────────────────────────
+
+  Implementation: semantic/symbol_table.py — class SymbolTable
+
+  The symbol table uses a Python list as a stack:
+    self.scopes = [{}]   ← starts with one global scope
+
+  When { is entered: scopes.append({})
+  When } is exited:  scope = scopes.pop(); return scope
+
+  This naturally handles nested scopes:
+    int x;     ← declared in scope level 0
+    {
+      int y;   ← declared in scope level 1
+      {
+        int z; ← declared in scope level 2
+      }          ← z is removed here, checked for unused
+    }            ← y is removed here, checked for unused
+                 ← x still in scope level 0
+
+  The lookup() method searches from the innermost scope outward,
+  which correctly implements variable shadowing.
+
+  The declare() method ONLY checks the innermost scope for duplicates,
+  which correctly implements "redeclaration in the same scope" (not
+  shadow declarations in inner scopes).
+
+────────────────────────────────────────────────────────────────────────────────
+5.05  SEMANTIC ANALYSER  (Phase 6)
+────────────────────────────────────────────────────────────────────────────────
+
+  Implementation: semantic/analyzer.py — class SemanticAnalyzer
+
+  Uses the Visitor Pattern: _visit(node) dispatches to _v_{nodetype}(node).
+  This makes it easy to add new checks for new node types in the future.
+
+  The analyser makes a single pass through the entire AST.
+  It maintains the symbol table as it walks:
+    - Entering a Block → enter_scope()
+    - Leaving a Block → exit_scope() → check_unused()
+    - Finding a Declaration → declare() in symbol table
+    - Finding an Identifier in expression → lookup() → mark_used()
+    - Finding an Assignment LHS → lookup() → mark_assigned()
+
+────────────────────────────────────────────────────────────────────────────────
+5.06  STATIC BUG DETECTOR  (Phase 7)
+────────────────────────────────────────────────────────────────────────────────
+
+  Implementation: Integrated in semantic/analyzer.py
+
+  Two static bugs are detected:
+
+  UNUSED VARIABLES:
+    When any scope is exited (_check_unused method), every symbol in
+    that scope is inspected. If used == False, an UNUSED_VAR warning
+    is emitted. This catches declared-but-never-read variables even
+    across deeply nested scopes.
+
+  UNREACHABLE CODE:
+    In _visit_block_stmts(), a local boolean return_seen is maintained.
+    When a Return node is encountered, return_seen is set to True.
+    The very next iteration checks return_seen BEFORE visiting the
+    statement — if True, UNREACHABLE_CODE is emitted and the loop
+    breaks (only one warning per block, not one per unreachable line).
+
+────────────────────────────────────────────────────────────────────────────────
+5.07  FEATURE EXTRACTION FROM AST  (Phase 8)
+────────────────────────────────────────────────────────────────────────────────
+
+  Implementation: app.py — _compute_metrics(tokens, ast_root)
+
+  Three sets of features are extracted:
+
+  a) Token-level features:
+     Counter(t.type for t in tokens) — counts how many KEYWORD, IDENTIFIER,
+     NUMBER, OPERATOR, etc. tokens exist. This is the raw lexical fingerprint.
+
+  b) AST structural features:
+     Recursive walk of the AST:
+       - Every Declaration node → adds variable name to a list
+       - Every FunctionDef node → adds function name to a list
+       - Recursively measures depth: depth = 1 + max(child depths)
+     Result: variable list, function list, maximum AST depth.
+
+  c) Summary:
+     total_tokens: total count of all tokens
+     ast_depth:    how deeply nested the code is (a proxy for complexity)
+
+  These features are returned in the JSON response and displayed in the
+  Metrics tab. They are also the foundation for future ML-based analysis.
+
+────────────────────────────────────────────────────────────────────────────────
+5.08  CODE QUALITY SCORING  (Phase 9)
+────────────────────────────────────────────────────────────────────────────────
+
+  Implementation: semantic/quality_scorer.py — compute_quality(issues)
+
+  Inputs:  the list of SemanticIssue objects from the analyser
+  Process:
+    1. Separate issues into errors and warnings
+    2. Count specific sub-types (unreachable, unused, uninitialized)
+    3. score = max(0, min(100, 100 - errors*15 - warnings*5))
+    4. Map score to grade using the threshold table
+    5. Select color for the UI display
+    6. Build a detailed breakdown list
+  Output:  dict with score, grade, color, summary, counts, breakdown
+
+  The score intentionally penalises errors more than warnings (15 vs 5)
+  because errors indicate definite incorrectness, while warnings indicate
+  potential issues or poor style.
+
+────────────────────────────────────────────────────────────────────────────────
+5.09  REPORT GENERATION & UI  (Phase 10)
+────────────────────────────────────────────────────────────────────────────────
+
+  Implementation: app.py (JSON response) + templates/index.html (rendering)
+
+  The report is generated in two ways:
+
+  1. JSON API:
+     POST /analyze returns a comprehensive JSON object. This is the
+     "machine-readable report" that can be consumed by any client.
+     Every issue has: kind, code, message, line, variable, hint.
+
+  2. Dashboard UI:
+     The Semantic tab renders the JSON into:
+       - Filterable issue cards (Error/Warning toggle)
+       - Symbol table showing every variable's full lifecycle
+       - Quality score card with numeric score, letter grade, breakdown
+
+     Issue cards show:
+       - Color-coded left border (red = error, amber = warning)
+       - Icon (❌ or ⚠️)
+       - Issue code in monospace
+       - Line number badge
+       - Full message
+       - Hint text in italics (how to fix it)
+
+────────────────────────────────────────────────────────────────────────────────
+5.10  FILE UPLOAD FEATURE
+────────────────────────────────────────────────────────────────────────────────
+
+  Implementation: templates/index.html — HTML input + JavaScript FileReader
+
+  A hidden <input type="file" accept=".c,.h,.txt"> element is in the HTML.
+  The visible "↑ Upload .c" button triggers this input via:
+    document.getElementById('file-upload').click()
+
+  When a file is selected:
+    1. Validate: must be .c, .h, or .txt → else show error message
+    2. Create a FileReader object
+    3. reader.readAsText(file) — reads file as UTF-8 string (asynchronous)
+    4. reader.onload callback:
+         Sets codeEditor.value = file contents
+         Calls updateLineNumbers() (sync line numbers with content)
+         Updates footer with filename
+         Hides any existing error panel
+         Calls analyzeCode() automatically
+    5. reader.onerror → shows "Failed to read file" error
+    6. Resets input value to "" so the same file can be uploaded again
+
+  This is entirely client-side — no server upload endpoint needed.
+  The file is read directly in the browser's memory.
+
+────────────────────────────────────────────────────────────────────────────────
+5.11  HISTORY TRACKING
+────────────────────────────────────────────────────────────────────────────────
+
+  Implementation: app.py — _history (collections.deque, maxlen=20)
+
+  Every successful POST /analyze call adds a record to _history:
+    timestamp, source_preview (first 100 chars), token_count,
+    errors, gcc_ok, sem_errors, sem_warnings, quality_grade
+
+  maxlen=20 means the oldest record is automatically discarded
+  when the 21st analysis is added (no manual cleanup needed).
+
+  GET /history returns this list as JSON.
+  POST /history/clear calls _history.clear().
+
+  The History drawer in the UI polls GET /history after each analysis
+  and renders entries as cards showing time, preview, grade badge.
+
+────────────────────────────────────────────────────────────────────────────────
+5.12  EXPORT FEATURE
+────────────────────────────────────────────────────────────────────────────────
+
+  Implementation: templates/index.html — exportJSON(type) function
+
+  The export dropdown has three options:
+    "Export Tokens JSON"  → exports lastResult.tokens
+    "Export AST JSON"     → exports lastResult.ast
+    "Export Full Report"  → exports the entire lastResult object
+
+  exportJSON(type) creates a JSON string, wraps it in a Blob,
+  creates a temporary <a> element, sets href to a blob URL,
+  sets download filename, clicks it, then revokes the URL.
+  This triggers the browser's native file download dialog.
+  No server request is needed.
+
+────────────────────────────────────────────────────────────────────────────────
+5.13  GCC INTEGRATION
+────────────────────────────────────────────────────────────────────────────────
+
+  Implementation: compiler/compile_checker.py
+
+  The code is written to a temp file (tempfile.NamedTemporaryFile with .c ext).
+  subprocess.run() calls: ["gcc", "-fsyntax-only", "-x", "c", tmpfile.name]
+  stderr and stdout are captured.
+  Return code 0 = no errors; non-zero = compile errors.
+
+  If GCC is not installed, a warning is shown in the GCC tab with
+  installation instructions for Windows, macOS, and Linux.
+
+────────────────────────────────────────────────────────────────────────────────
+5.14  PYCPARSER INTEGRATION
+────────────────────────────────────────────────────────────────────────────────
+
+  Implementation: analyzer/ast_parser.py
+
+  pycparser is a pure-Python C99 parser. Since it cannot handle
+  #include and #define directives, these are stripped before parsing:
+    cleaned = re.sub(r'^\s*#.*$', '', source, flags=re.MULTILINE)
+
+  pycparser.CParser().parse(cleaned) is called.
+  Success → returns { ok: true, ast_str: str(ast) }
+  Failure → returns { ok: false, output: error message }
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+6. SEMANTIC ERROR TYPES — FULL DESCRIPTION
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  UNDECLARED_VAR  (ERROR)
+    Trigger: An identifier appears in an expression or assignment but
+             has never been declared in any reachable scope.
+    Example: x = 10;   ← (if int x; was never written)
+    Fix:     Declare the variable first: int x;
+    Where:   _v_identifier() and _v_assignment()
+
+  REDECLARATION  (ERROR)
+    Trigger: A variable is declared twice in the SAME scope.
+             (Inner scopes can shadow outer ones without error.)
+    Example: int x; int x;   ← second declaration in same block
+    Fix:     Remove the duplicate or rename one of them.
+    Where:   _v_declaration() calling symbol_table.declare()
+
+  UNUSED_VAR  (WARNING)
+    Trigger: A variable is declared but its value is never READ anywhere
+             in the code before the scope exits.
+    Example: int y = 5;   ← (y is never referenced again)
+    Fix:     Either use the variable or remove its declaration.
+    Where:   _check_unused() called on scope exit
+
+  UNINITIALIZED_USE  (WARNING)
+    Trigger: A variable is read (used in an expression) before any value
+             has ever been assigned to it.
+    Example: int x; int y = x + 1;   ← x has no value yet
+    Fix:     Assign a value before using it: int x = 0;
+    Where:   _v_identifier() checking sym.assigned == False
+
+  UNREACHABLE_CODE  (WARNING)
+    Trigger: A statement appears after a return statement in the same block.
+             Code after a return can never be executed.
+    Example: return 0; int z = 5;   ← z = 5 is unreachable
+    Fix:     Remove or move the unreachable statement.
+    Where:   _visit_block_stmts() checking return_seen flag
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+7. API ENDPOINTS REFERENCE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  GET  /
+    Returns: index.html dashboard page
+
+  POST /analyze
+    Request body: { "code": "<source code string>" }
+    Response:
+    {
+      "tokens":    [ { "type": "...", "value": "...", "line": N } ],
+      "ast":       { "type": "...", "value": "...", "children": [...] },
+      "metrics":   {
+        "token_counts":  { "KEYWORD": N, ... },
+        "total_tokens":  N,
+        "variables":     ["x", "y", ...],
+        "functions":     ["main", ...],
+        "ast_depth":     N
+      },
+      "semantic":  {
+        "issues": [
+          {
+            "kind":     "ERROR" | "WARNING",
+            "code":     "UNDECLARED_VAR" | "REDECLARATION" | "UNUSED_VAR"
+                      | "UNINITIALIZED_USE" | "UNREACHABLE_CODE",
+            "message":  "...",
+            "line":     N,
+            "variable": "name" | null,
+            "hint":     "..."
+          }
+        ],
+        "symbol_table": [
+          {
+            "name":          "...",
+            "type":          "int" | "function" | ...,
+            "scope_level":   N,
+            "declared_line": N,
+            "used":          true | false,
+            "assigned":      true | false
+          }
+        ],
+        "error_count":   N,
+        "warning_count": N,
+        "quality": {
+          "score":   N,
+          "grade":   "A" | "B" | "C" | "D" | "F",
+          "color":   "#hex",
+          "summary": "...",
+          ...
+        }
+      },
+      "gcc":       { "ok": true|false, "output": "..." },
+      "pycparser": { "ok": true|false, "output": "..." },
+      "errors":    ["parse error message"] | []
+    }
+
+  GET  /history
+    Response: [ { timestamp, source_preview, token_count, errors,
+                  gcc_ok, sem_errors, sem_warnings, quality_grade } ]
+
+  POST /history/clear
+    Response: { "ok": true }
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+8. HOW TO RUN THE PROJECT
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  1. Install Python 3.10+  (https://python.org)
+
+  2. Install dependencies:
+       cd smart_static_analyzer
+       pip install -r requirements.txt
+
+     requirements.txt contains:
+       Flask>=3.0.0
+       pycparser>=2.22
+
+  3. (Optional) Install GCC for the GCC validation tab:
+       Windows : Install MinGW-w64 and add to PATH
+       macOS   : xcode-select --install
+       Linux   : sudo apt install gcc
+
+  4. Run the server:
+       python app.py
+
+  5. Open browser at:
+       http://127.0.0.1:5000
+
+  6. Type or upload C-like code and click Analyze (or press Ctrl+Enter).
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+9. SUMMARY OF ALL 10 PHASES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  Phase 1  : Language grammar design
+             Written as formal rules in parser.py docstring.
+             Covers all C-like constructs: declarations, assignments,
+             functions, blocks, expressions, preprocessor lines.
+
+  Phase 2  : Lexer implementation
+             lexer.py — hand-written character scanner.
+             Produces 8 token types. Handles comments, preprocessors,
+             multi-character operators, hex/float literals.
+
+  Phase 3  : Parser implementation
+             parser.py — recursive descent, one function per grammar rule.
+             Produces a typed, line-numbered AST or reports syntax errors.
+
+  Phase 4  : AST generation
+             ast_nodes.py — ASTNode dataclass + 11 factory functions.
+             Every node carries type, value, children, and line number.
+
+  Phase 5  : Symbol table implementation
+             semantic/symbol_table.py — stack of scope dicts.
+             Tracks: name, type, scope level, line, used, assigned.
+             Pre-populated with 30+ C library builtins.
+
+  Phase 6  : Semantic analyser implementation
+             semantic/analyzer.py — Visitor Pattern, single AST pass.
+             Detects: UNDECLARED_VAR, REDECLARATION, UNINITIALIZED_USE.
+             Updates symbol table as it walks.
+
+  Phase 7  : Static bug detection implementation
+             Integrated in semantic/analyzer.py.
+             Detects: UNUSED_VAR (on scope exit), UNREACHABLE_CODE
+             (after return in same block).
+
+  Phase 8  : Feature extraction from AST
+             app.py → _compute_metrics().
+             Extracts: token type distribution, variable names,
+             function names, maximum AST depth.
+
+  Phase 9  : Code quality scoring implementation
+             semantic/quality_scorer.py → compute_quality().
+             Score: 0-100. Grade: A/B/C/D/F. Color-coded.
+             Detailed breakdown by issue category.
+
+  Phase 10 : Report generation and UI integration
+             app.py returns comprehensive JSON.
+             index.html renders issue cards, symbol table, quality card,
+             token table, AST tree, metrics charts, GCC/pycparser results.
+             File upload, presets, export, history, and keyboard shortcuts.
+
+================================================================================
+                              END OF DOCUMENTATION
+================================================================================
