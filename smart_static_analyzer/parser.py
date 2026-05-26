@@ -23,6 +23,7 @@ from ast_nodes import (
 
 TYPE_KEYWORDS = {"int", "void", "char", "float", "double", "long", "short", "unsigned", "signed"}
 BINARY_OPERATORS = {"+", "-", "*", "/", "%", "<", ">", "==", "!=", "<=", ">=", "&&", "||"}
+ASSIGNMENT_OPERATORS = {"=", "+=", "-=", "*=", "/=", "%="}
 
 TYPE_CANONICAL = {
     "int": "int", "long": "long", "short": "short", "char": "char",
@@ -154,7 +155,6 @@ class Parser:
             return self._parse_block()
 
         if tok.type == "IDENTIFIER":
-            # Peek if array element assignment: IDENTIFIER '[' ... ']' '='
             is_assign = False
             temp = self.pos + 1
             if temp < len(self.tokens) and self.tokens[temp].type == "SYMBOL" and self.tokens[temp].value == "[":
@@ -165,9 +165,9 @@ class Parser:
                         depth += 1
                     elif self.tokens[temp].type == "SYMBOL" and self.tokens[temp].value == "]":
                         depth -= 1
-                if temp + 1 < len(self.tokens) and self.tokens[temp + 1].type == "OPERATOR" and self.tokens[temp + 1].value == "=":
+                if temp + 1 < len(self.tokens) and self.tokens[temp + 1].type == "OPERATOR" and self.tokens[temp + 1].value in ASSIGNMENT_OPERATORS:
                     is_assign = True
-            elif temp < len(self.tokens) and self.tokens[temp].type == "OPERATOR" and self.tokens[temp].value == "=":
+            elif temp < len(self.tokens) and self.tokens[temp].type == "OPERATOR" and self.tokens[temp].value in ASSIGNMENT_OPERATORS:
                 is_assign = True
 
             if is_assign:
@@ -175,6 +175,20 @@ class Parser:
             expr = self._parse_expression()
             self._match("SYMBOL", ";")
             return expression_stmt_node(expr)
+
+        if tok.type == "KEYWORD" and tok.value == "if":
+            return self._parse_if()
+
+        if tok.type == "KEYWORD" and tok.value == "while":
+            return self._parse_while()
+
+        if tok.type == "KEYWORD" and tok.value == "for":
+            return self._parse_for()
+
+        if tok.type == "KEYWORD" and tok.value in ("break", "continue"):
+            self._advance()
+            self._match("SYMBOL", ";")
+            return ASTNode(tok.value.capitalize(), line=tok.line)
 
         if tok.type == "KEYWORD":
             self._advance()
@@ -185,6 +199,35 @@ class Parser:
             return expression_stmt_node(identifier_node(f"[{tok.value}…]"))
 
         raise ParseError(f"Unexpected token '{tok.value}'", tok.line)
+
+    def _parse_if(self) -> ASTNode:
+        if_tok = self._match("KEYWORD", "if")
+        self._match("SYMBOL", "(")
+        cond = self._parse_expression()
+        self._match("SYMBOL", ")")
+        then_branch = self._parse_statement()
+        node = ASTNode("If", line=if_tok.line)
+        node.add_child(cond)
+        node.add_child(then_branch)
+
+        # Check for optional else branch
+        if (tok := self._cur()) and tok.type == "KEYWORD" and tok.value == "else":
+            self._advance()
+            else_branch = self._parse_statement()
+            node.add_child(else_branch)
+
+        return node
+
+    def _parse_while(self) -> ASTNode:
+        while_tok = self._match("KEYWORD", "while")
+        self._match("SYMBOL", "(")
+        cond = self._parse_expression()
+        self._match("SYMBOL", ")")
+        body = self._parse_statement()
+        node = ASTNode("While", line=while_tok.line)
+        node.add_child(cond)
+        node.add_child(body)
+        return node
 
     def _parse_declaration(self) -> ASTNode:
         type_parts = []
@@ -229,8 +272,9 @@ class Parser:
             self._parse_expression()
             self._match("SYMBOL", "]")
             is_subscripted = True
-        self._match("OPERATOR", "=")
+        op_tok = self._match("OPERATOR")
         assign = assignment_node(line=ident.line)
+        assign.value = op_tok.value
         lhs = identifier_node(ident.value, line=ident.line)
         if is_subscripted:
             lhs.meta["is_subscripted"] = True
@@ -238,6 +282,54 @@ class Parser:
         assign.add_child(self._parse_expression())
         self._match("SYMBOL", ";")
         return assign
+
+    def _parse_for(self) -> ASTNode:
+        for_tok = self._match("KEYWORD", "for")
+        self._match("SYMBOL", "(")
+
+        init_node = None
+        if self._cur() and self._cur().type == "SYMBOL" and self._cur().value == ";":
+            self._advance()
+        elif self._is_type_kw(self._cur()):
+            init_node = self._parse_declaration()
+        else:
+            init_node = self._parse_expression()
+            self._match("SYMBOL", ";")
+
+        cond_node = None
+        if self._cur() and self._cur().type == "SYMBOL" and self._cur().value == ";":
+            self._advance()
+        else:
+            cond_node = self._parse_expression()
+            self._match("SYMBOL", ";")
+
+        step_node = None
+        if self._cur() and self._cur().type == "SYMBOL" and self._cur().value == ")":
+            pass
+        else:
+            step_node = self._parse_expression()
+
+        self._match("SYMBOL", ")")
+        body_node = self._parse_statement()
+
+        node = ASTNode("For", line=for_tok.line)
+        if init_node:
+            node.add_child(init_node)
+        else:
+            node.add_child(ASTNode("EmptyInit", line=for_tok.line))
+
+        if cond_node:
+            node.add_child(cond_node)
+        else:
+            node.add_child(ASTNode("EmptyCond", line=for_tok.line))
+
+        if step_node:
+            node.add_child(step_node)
+        else:
+            node.add_child(ASTNode("EmptyStep", line=for_tok.line))
+
+        node.add_child(body_node)
+        return node
 
     def _parse_return(self) -> ASTNode:
         ret_tok = self._match("KEYWORD", "return")
@@ -304,6 +396,13 @@ class Parser:
 
         if tok.type == "IDENTIFIER":
             ident = self._match("IDENTIFIER")
+
+            # Postfix unary operators: x++, x--
+            if self._cur() and self._cur().type == "OPERATOR" and self._cur().value in ("++", "--"):
+                op = self._match("OPERATOR")
+                node = binary_op_node(f"unary{op.value}", line=ident.line)
+                node.add_child(identifier_node(ident.value, line=ident.line))
+                return node
             # Function calls: foo(arg1, arg2)
             if self._cur() and self._cur().type == "SYMBOL" and self._cur().value == "(":
                 self._match("SYMBOL", "(")

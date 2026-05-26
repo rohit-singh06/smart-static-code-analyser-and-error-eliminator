@@ -52,21 +52,18 @@
 
     /* ══════════════ AST Tree Graph Styling ══════════════ */
     .ast-svg-node {
-      transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1);
       cursor: pointer;
-    }
-    .ast-svg-node:hover {
-      transform: scale(1.04);
     }
     .ast-svg-node-bg {
       stroke-width: 1.5;
       rx: 8;
       ry: 8;
       filter: url(#ast-shadow);
-      transition: fill 0.2s, stroke 0.2s;
+      transition: fill 0.2s, stroke 0.2s, stroke-width 0.2s;
     }
     .ast-svg-node:hover .ast-svg-node-bg {
-      stroke-width: 2px;
+      stroke: var(--accent);
+      stroke-width: 2.5px;
     }
     .ast-svg-node-accent {
       rx: 4;
@@ -623,7 +620,7 @@ int main() {
       if (t.includes("DECL") || t.includes("INIT") || t.includes("TYPE")) {
         return { bg: "#f0fdf4", accent: "#10b981", border: "#a7f3d0" };
       }
-      if (t.includes("IF") || t.includes("WHILE") || t.includes("FOR") || t.includes("RETURN") || t.includes("BLOCK") || t === "COMPOUND") {
+      if (t.includes("IF") || t.includes("WHILE") || t.includes("FOR") || t.includes("RETURN") || t.includes("BLOCK") || t === "COMPOUND" || t === "BREAK" || t === "CONTINUE") {
         return { bg: "#f5f3ff", accent: "#8b5cf6", border: "#ddd6fe" };
       }
       if (t.includes("OP") || t.includes("ASSIGN") || t.includes("SUBSCRIPT") || t.includes("FUNC_CALL") || t.includes("CALL")) {
@@ -839,7 +836,11 @@ int main() {
         // Node expansion interaction
         g.addEventListener("click", e => {
           e.stopPropagation();
-          if (astDragMoved) return;
+          const dx = e.clientX - astMouseDownPos.x;
+          const dy = e.clientY - astMouseDownPos.y;
+          const dist = Math.sqrt(dx * dx + dy * dy);
+          if (dist > 6) return; // ignore if user was dragging panned viewport
+          
           node.expanded = !node.expanded;
           redrawAST();
         });

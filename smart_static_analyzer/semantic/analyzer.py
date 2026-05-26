@@ -13,6 +13,7 @@ HINTS = {
     "UNINITIALIZED_USE": "Assign a value to '{var}' before using it, e.g. `{var} = 0;`",
     "UNREACHABLE_CODE": "Move or remove statements that appear after a return.",
     "TYPE_MISMATCH": "Check the type of '{var}' and the value being assigned to it.",
+    "INFINITE_LOOP": "Modify '{var}' inside the loop body (e.g., increment/decrement or re-assign) to ensure loop termination.",
 }
 
 # Type systems promotion and rules
@@ -229,6 +230,119 @@ class SemanticAnalyzer:
 
     def visit_binaryop(self, node) -> None:
         self.visit_children(node)
+
+    def visit_if(self, node) -> None:
+        self.visit_children(node)
+
+    def visit_for(self, node) -> None:
+        if len(node.children) < 4:
+            self.visit_children(node)
+            return
+
+        init_node = node.children[0]
+        cond_node = node.children[1]
+        step_node = node.children[2]
+        body_node = node.children[3]
+
+        self.symbol_table.enter_scope()
+
+        self.visit(init_node)
+        self.visit(cond_node)
+        self.visit(step_node)
+        self.visit(body_node)
+
+        cond_vars = set()
+        self._collect_identifiers(cond_node, cond_vars)
+
+        if cond_vars:
+            mutated_in_step = self._check_loop_body_mutations(step_node, cond_vars)
+            mutated_in_body = self._check_loop_body_mutations(body_node, cond_vars)
+            if not mutated_in_step and not mutated_in_body:
+                first_var = list(cond_vars)[0]
+                self._report_warning(
+                    "INFINITE_LOOP",
+                    f"Infinite Loop: variable '{first_var}' is checked in the for-loop condition but is never modified in the increment step or loop body.",
+                    node.line,
+                    first_var
+                )
+
+        scope = self.symbol_table.exit_scope()
+        self._check_unused(scope)
+
+    def visit_while(self, node) -> None:
+        if len(node.children) < 2:
+            self.visit_children(node)
+            return
+
+        cond = node.children[0]
+        body = node.children[1]
+
+        self.visit(cond)
+        self.visit(body)
+
+        cond_vars = set()
+        self._collect_identifiers(cond, cond_vars)
+
+        if cond_vars:
+            mutated = self._check_loop_body_mutations(body, cond_vars)
+            if not mutated:
+                first_var = list(cond_vars)[0]
+                self._report_warning(
+                    "INFINITE_LOOP",
+                    f"Infinite Loop: variable '{first_var}' is checked in the loop condition but is never modified inside the loop body.",
+                    node.line,
+                    first_var
+                )
+        else:
+            if self._is_const_truthy(cond):
+                has_exit = self._check_loop_body_mutations(body, set())
+                if not has_exit:
+                    self._report_warning(
+                        "INFINITE_LOOP",
+                        "Infinite Loop: condition is constant non-zero and loop body contains no exit paths.",
+                        node.line,
+                        "1"
+                    )
+
+    def _collect_identifiers(self, node, result_set: set) -> None:
+        if node is None:
+            return
+        if node.type == "Identifier" and node.value:
+            result_set.add(node.value)
+        for child in node.children:
+            self._collect_identifiers(child, result_set)
+
+    def _check_loop_body_mutations(self, node, cond_vars: set) -> bool:
+        if node is None:
+            return False
+
+        if node.type == "Assignment" and node.children:
+            lhs = node.children[0]
+            if lhs.type == "Identifier" and lhs.value in cond_vars:
+                return True
+
+        if node.type == "BinaryOp" and node.value:
+            op = node.value
+            if op.startswith("unary") and ("++" in op or "--" in op) and node.children:
+                operand = node.children[0]
+                if operand.type == "Identifier" and operand.value in cond_vars:
+                    return True
+
+        if node.type == "Return":
+            return True
+
+        for child in node.children:
+            if self._check_loop_body_mutations(child, cond_vars):
+                return True
+
+        return False
+
+    def _is_const_truthy(self, node) -> bool:
+        if node is None:
+            return False
+        if node.type == "Number" and node.value != 0:
+            return True
+        return False
 
     def visit_number(self, node) -> None:
         pass
