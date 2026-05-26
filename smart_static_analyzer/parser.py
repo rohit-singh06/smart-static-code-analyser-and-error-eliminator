@@ -1,371 +1,349 @@
 """
 Recursive descent parser for a C-like language.
-
-Grammar (extended):
-    Program           → FunctionDefList | StatementList
-
-    FunctionDefList   → FunctionDef FunctionDefList | ε
-    FunctionDef       → TypeKW IDENTIFIER '(' ')' Block
-
-    StatementList     → (PREPROCESSOR | Statement) StatementList | ε
-
-    Statement         → Declaration
-                      | Assignment
-                      | ReturnStatement
-                      | Block
-                      | ExpressionStatement
-
-    Declaration       → TypeKW IDENTIFIER ('=' Expression)? ';'
-    Assignment        → IDENTIFIER '=' Expression ';'
-    ReturnStatement   → 'return' Expression? ';'
-    Block             → '{' StatementList '}'
-    ExpressionStatement → Expression ';'
-
-    Expression        → Term ((+ | - | * | / | < | > | == | != | <= | >=) Term)*
-    Term              → IDENTIFIER [ '(' ArgList? ')' ]
-                      | NUMBER | CHAR | STRING | '(' Expression ')'
-
-    ArgList           → Expression (',' Expression)*
-
-    TypeKW            → 'int' | 'void' | 'char' | 'float' | 'double'
-                       | 'long' | 'short' | 'unsigned' | 'signed'
+Builds an AST node tree from a list of Tokens.
 """
 
-from __future__ import annotations
-
 from typing import List
+from lexer import Token
+from ast_nodes import (
+    ASTNode,
+    program_node,
+    declaration_node,
+    assignment_node,
+    return_node,
+    block_node,
+    binary_op_node,
+    identifier_node,
+    number_node,
+    string_node,
+    function_def_node,
+    expression_stmt_node,
+    call_expression_node,
+)
 
-try:
-    from .lexer import Token
-    from .ast_nodes import (
-        ASTNode,
-        program_node,
-        declaration_node,
-        assignment_node,
-        return_node,
-        block_node,
-        binary_op_node,
-        identifier_node,
-        number_node,
-        string_node,
-        function_def_node,
-        expression_stmt_node,
-        call_expression_node,
-    )
-except ImportError:
-    from lexer import Token
-    from ast_nodes import (
-        ASTNode,
-        program_node,
-        declaration_node,
-        assignment_node,
-        return_node,
-        block_node,
-        binary_op_node,
-        identifier_node,
-        number_node,
-        string_node,
-        function_def_node,
-        expression_stmt_node,
-        call_expression_node,
-    )
-
-# All keywords that can start a type declaration or function return type
-TYPE_KEYWORDS = {
-    "int", "void", "char", "float", "double",
-    "long", "short", "unsigned", "signed",
-}
-
+TYPE_KEYWORDS = {"int", "void", "char", "float", "double", "long", "short", "unsigned", "signed"}
 BINARY_OPERATORS = {"+", "-", "*", "/", "%", "<", ">", "==", "!=", "<=", ">=", "&&", "||"}
+
+TYPE_CANONICAL = {
+    "int": "int", "long": "long", "short": "short", "char": "char",
+    "float": "float", "double": "double", "void": "void",
+}
+TYPE_MODIFIERS = {"unsigned", "signed"}
 
 
 class ParseError(Exception):
-    """Raised when a syntax error is encountered."""
-
     def __init__(self, message: str, line: int):
         super().__init__(f"Syntax error on line {line}: {message}")
         self.line = line
 
 
 class Parser:
-    """Recursive descent parser that builds an AST from tokens."""
-
     def __init__(self, tokens: List[Token]):
         self.tokens = tokens
         self.pos = 0
 
-    def _current(self) -> Token | None:
-        if self.pos >= len(self.tokens):
-            return None
-        return self.tokens[self.pos]
+    def _cur(self) -> Token | None:
+        return self.tokens[self.pos] if self.pos < len(self.tokens) else None
 
     def _advance(self) -> None:
         if self.pos < len(self.tokens):
             self.pos += 1
 
-    def _match(self, expected_type: str | None = None, expected_value: str | None = None) -> Token:
-        token = self._current()
-        if token is None:
+    def _match(self, type_expected: str = None, value_expected: str = None) -> Token:
+        tok = self._cur()
+        if tok is None:
             raise ParseError("Unexpected end of input", self.tokens[-1].line if self.tokens else 1)
 
-        if expected_type is not None and token.type != expected_type:
-            raise ParseError(f"Expected token type {expected_type}, got {token.type}", token.line)
-        if expected_value is not None and token.value != expected_value:
-            raise ParseError(f"Expected '{expected_value}', got '{token.value}'", token.line)
+        if type_expected is not None and tok.type != type_expected:
+            raise ParseError(f"Expected token type {type_expected}, got {tok.type}", tok.line)
+        if value_expected is not None and tok.value != value_expected:
+            raise ParseError(f"Expected '{value_expected}', got '{tok.value}'", tok.line)
 
         self._advance()
-        return token
+        return tok
 
-    # Entry point ---------------------------------------------------------
-    def _is_type_keyword(self, tok: Token | None) -> bool:
+    def _is_type_kw(self, tok: Token | None) -> bool:
         return tok is not None and tok.type == "KEYWORD" and tok.value in TYPE_KEYWORDS
 
-    def _skip_type_qualifiers(self) -> None:
-        """Consume optional type qualifiers: const, static, extern, volatile."""
+    def _skip_qualifiers(self) -> None:
         qualifiers = {"const", "static", "extern", "volatile", "register", "auto"}
-        while True:
-            tok = self._current()
-            if tok and tok.type == "KEYWORD" and tok.value in qualifiers:
-                self._advance()
-            else:
-                break
+        while (tok := self._cur()) and tok.type == "KEYWORD" and tok.value in qualifiers:
+            self._advance()
+
+    def _canonical_type(self, type_parts: List[str]) -> str:
+        base = [t for t in type_parts if t not in TYPE_MODIFIERS]
+        if not base:
+            return "int"
+        return TYPE_CANONICAL.get(base[0], base[0])
 
     def parse(self) -> ASTNode:
-        """Parse tokens into a Program AST node."""
-        # Skip leading preprocessor tokens and qualifiers to find real start
-        temp_pos = self.pos
-        while temp_pos < len(self.tokens) and self.tokens[temp_pos].type == "PREPROCESSOR":
-            temp_pos += 1
+        # Check if the code starts with a function definition pattern: TypeKW Identifier '('
+        temp = self.pos
+        while temp < len(self.tokens) and self.tokens[temp].type == "PREPROCESSOR":
+            temp += 1
 
-        # Heuristic: TypeKW IDENT '(' → function definition list
         if (
-            temp_pos + 2 < len(self.tokens)
-            and self._is_type_keyword(self.tokens[temp_pos])
-            and self.tokens[temp_pos + 1].type == "IDENTIFIER"
-            and self.tokens[temp_pos + 2].type == "SYMBOL"
-            and self.tokens[temp_pos + 2].value == "("
+            temp + 2 < len(self.tokens)
+            and self._is_type_kw(self.tokens[temp])
+            and self.tokens[temp + 1].type == "IDENTIFIER"
+            and self.tokens[temp + 2].type == "SYMBOL"
+            and self.tokens[temp + 2].value == "("
         ):
-            # Consume leading preprocessor tokens first
-            while self._current() and self._current().type == "PREPROCESSOR":
+            # Parse list of function definitions
+            while self._cur() and self._cur().type == "PREPROCESSOR":
                 self._advance()
-            functions: List[ASTNode] = []
-            while self._current() is not None:
-                tok = self._current()
+            funcs = []
+            while self._cur() is not None:
+                tok = self._cur()
                 if tok.type == "PREPROCESSOR":
-                    self._advance(); continue
-                if not self._is_type_keyword(tok):
+                    self._advance()
+                    continue
+                if not self._is_type_kw(tok):
                     break
-                functions.append(self._parse_function_def())
-            return program_node(functions)
+                funcs.append(self._parse_function())
+            return program_node(funcs)
 
-        statements: List[ASTNode] = self._parse_statement_list()
-        return program_node(statements)
+        # Parse statement list otherwise
+        return program_node(self._parse_statement_list())
 
-    def _parse_function_def(self) -> ASTNode:
-        """
-        FunctionDef → TypeKW IDENTIFIER '(' ParamList? ')' Block
-        """
-        self._skip_type_qualifiers()
-        while self._is_type_keyword(self._current()):
+    def _parse_function(self) -> ASTNode:
+        self._skip_qualifiers()
+        while self._is_type_kw(self._cur()):
             self._advance()
-        ident = self._match(expected_type="IDENTIFIER")
-        self._match(expected_type="SYMBOL", expected_value="(")
+        ident = self._match("IDENTIFIER")
+        self._match("SYMBOL", "(")
+        # Skip function parameters safely
         depth = 1
-        while self._current() is not None and depth > 0:
-            v = self._current().value; t = self._current().type
-            if t == "SYMBOL" and v == "(": depth += 1
-            elif t == "SYMBOL" and v == ")": depth -= 1
+        while self._cur() is not None and depth > 0:
+            v, t = self._cur().value, self._cur().type
+            if t == "SYMBOL" and v == "(":
+                depth += 1
+            elif t == "SYMBOL" and v == ")":
+                depth -= 1
             self._advance()
         body = self._parse_block()
         func = function_def_node(ident.value, line=ident.line)
         func.add_child(body)
         return func
 
-    # Statement list and statements --------------------------------------
     def _parse_statement_list(self) -> List[ASTNode]:
-        stmts: List[ASTNode] = []
+        stmts = []
         while True:
-            token = self._current()
-            if token is None:
+            tok = self._cur()
+            if tok is None or (tok.type == "SYMBOL" and tok.value == "}"):
                 break
-            if token.type == "SYMBOL" and token.value == "}":
-                break
-            # Silently skip preprocessor directives inside blocks
-            if token.type == "PREPROCESSOR":
+            if tok.type == "PREPROCESSOR":
                 self._advance()
                 continue
             stmts.append(self._parse_statement())
         return stmts
 
     def _parse_statement(self) -> ASTNode:
-        token = self._current()
-        if token is None:
+        self._skip_qualifiers()
+        tok = self._cur()
+        if tok is None:
             raise ParseError("Unexpected end of input in statement", 1)
 
-        # Skip type qualifiers (const, static, etc.) before type keywords
-        self._skip_type_qualifiers()
-        token = self._current()
-        if token is None:
-            raise ParseError("Unexpected end of input after qualifier", 1)
-
-        # Declaration: TypeKW IDENTIFIER ...
-        if self._is_type_keyword(token):
+        if self._is_type_kw(tok):
             return self._parse_declaration()
 
-        # Return
-        if token.type == "KEYWORD" and token.value == "return":
+        if tok.type == "KEYWORD" and tok.value == "return":
             return self._parse_return()
 
-        # Block
-        if token.type == "SYMBOL" and token.value == "{":
+        if tok.type == "SYMBOL" and tok.value == "{":
             return self._parse_block()
 
-        # Assignment or expression statement starting with IDENTIFIER
-        if token.type == "IDENTIFIER":
-            next_tok = self.tokens[self.pos + 1] if self.pos + 1 < len(self.tokens) else None
-            if next_tok is not None and next_tok.type == "OPERATOR" and next_tok.value == "=":
+        if tok.type == "IDENTIFIER":
+            # Peek if array element assignment: IDENTIFIER '[' ... ']' '='
+            is_assign = False
+            temp = self.pos + 1
+            if temp < len(self.tokens) and self.tokens[temp].type == "SYMBOL" and self.tokens[temp].value == "[":
+                depth = 1
+                while temp < len(self.tokens) and depth > 0:
+                    temp += 1
+                    if self.tokens[temp].type == "SYMBOL" and self.tokens[temp].value == "[":
+                        depth += 1
+                    elif self.tokens[temp].type == "SYMBOL" and self.tokens[temp].value == "]":
+                        depth -= 1
+                if temp + 1 < len(self.tokens) and self.tokens[temp + 1].type == "OPERATOR" and self.tokens[temp + 1].value == "=":
+                    is_assign = True
+            elif temp < len(self.tokens) and self.tokens[temp].type == "OPERATOR" and self.tokens[temp].value == "=":
+                is_assign = True
+
+            if is_assign:
                 return self._parse_assignment()
             expr = self._parse_expression()
-            self._match(expected_type="SYMBOL", expected_value=";")
+            self._match("SYMBOL", ";")
             return expression_stmt_node(expr)
 
-        # Unknown keyword or token — skip it gracefully to avoid hard crash
-        if token.type == "KEYWORD":
+        if tok.type == "KEYWORD":
             self._advance()
-            # consume until ';' or '}'
-            while self._current() and not (
-                (self._current().type == "SYMBOL" and self._current().value in (";", "{", "}"))
-            ):
+            while self._cur() and not (self._cur().type == "SYMBOL" and self._cur().value in (";", "{", "}")):
                 self._advance()
-            if self._current() and self._current().value == ";":
+            if self._cur() and self._cur().value == ";":
                 self._advance()
-            return expression_stmt_node(identifier_node(f"[{token.value}…]"))
+            return expression_stmt_node(identifier_node(f"[{tok.value}…]"))
 
-        raise ParseError(f"Unexpected token '{token.value}'", token.line)
+        raise ParseError(f"Unexpected token '{tok.value}'", tok.line)
 
     def _parse_declaration(self) -> ASTNode:
-        while self._is_type_keyword(self._current()):
+        type_parts = []
+        while self._is_type_kw(self._cur()):
+            type_parts.append(self._cur().value)
             self._advance()
-        while self._current() and self._current().type == "OPERATOR" and self._current().value == "*":
+        canonical = self._canonical_type(type_parts)
+
+        # Detect pointers: e.g., int* p;
+        is_ptr = False
+        while self._cur() and self._cur().type == "OPERATOR" and self._cur().value == "*":
             self._advance()
-        ident = self._match(expected_type="IDENTIFIER")
+            is_ptr = True
+        if is_ptr:
+            canonical += "*"
+
+        ident = self._match("IDENTIFIER")
         node = declaration_node(ident.value, line=ident.line)
-        if self._current() and self._current().type == "SYMBOL" and self._current().value == "[":
+        node.meta["var_type"] = canonical
+
+        # Detect arrays: e.g., int arr[10];
+        if self._cur() and self._cur().type == "SYMBOL" and self._cur().value == "[":
             self._advance()
-            while self._current() and self._current().value != "]":
+            while self._cur() and self._cur().value != "]":
                 self._advance()
-            if self._current(): self._advance()
-        token = self._current()
-        if token is not None and token.type == "OPERATOR" and token.value == "=":
+            if self._cur():
+                self._advance()
+            node.meta["var_type"] = canonical + "[]"
+
+        if self._cur() and self._cur().type == "OPERATOR" and self._cur().value == "=":
             self._advance()
             node.add_child(self._parse_expression())
-        self._match(expected_type="SYMBOL", expected_value=";")
+
+        self._match("SYMBOL", ";")
         return node
 
     def _parse_assignment(self) -> ASTNode:
-        ident = self._match(expected_type="IDENTIFIER")
-        self._match(expected_type="OPERATOR", expected_value="=")
+        ident = self._match("IDENTIFIER")
+        is_subscripted = False
+        if self._cur() and self._cur().type == "SYMBOL" and self._cur().value == "[":
+            self._match("SYMBOL", "[")
+            self._parse_expression()
+            self._match("SYMBOL", "]")
+            is_subscripted = True
+        self._match("OPERATOR", "=")
         assign = assignment_node(line=ident.line)
-        assign.add_child(identifier_node(ident.value, line=ident.line))
+        lhs = identifier_node(ident.value, line=ident.line)
+        if is_subscripted:
+            lhs.meta["is_subscripted"] = True
+        assign.add_child(lhs)
         assign.add_child(self._parse_expression())
-        self._match(expected_type="SYMBOL", expected_value=";")
+        self._match("SYMBOL", ";")
         return assign
 
     def _parse_return(self) -> ASTNode:
-        ret_tok = self._match(expected_type="KEYWORD", expected_value="return")
+        ret_tok = self._match("KEYWORD", "return")
         node = return_node(line=ret_tok.line)
-        tok = self._current()
-        if tok is not None and not (tok.type == "SYMBOL" and tok.value == ";"):
+        if self._cur() and not (self._cur().type == "SYMBOL" and self._cur().value == ";"):
             node.add_child(self._parse_expression())
-        self._match(expected_type="SYMBOL", expected_value=";")
+        self._match("SYMBOL", ";")
         return node
 
     def _parse_block(self) -> ASTNode:
-        lbrace = self._match(expected_type="SYMBOL", expected_value="{")
+        lbrace = self._match("SYMBOL", "{")
         stmts = self._parse_statement_list()
-        self._match(expected_type="SYMBOL", expected_value="}")
+        self._match("SYMBOL", "}")
         return block_node(stmts, line=lbrace.line)
 
-    # Expressions ---------------------------------------------------------
     def _parse_expression(self) -> ASTNode:
-        """
-        Expression → Term (BinaryOp Term)*
-        Supports arithmetic, comparison, logical operators.
-        """
         left = self._parse_term()
         while True:
-            token = self._current()
-            if token is None or token.type != "OPERATOR" or token.value not in BINARY_OPERATORS:
+            tok = self._cur()
+            if tok is None or tok.type != "OPERATOR" or tok.value not in BINARY_OPERATORS:
                 break
-            op_token = self._match(expected_type="OPERATOR")
+            op_tok = self._match("OPERATOR")
             right = self._parse_term()
-            op_node = binary_op_node(op_token.value)
+            op_node = binary_op_node(op_tok.value)
             op_node.add_child(left)
             op_node.add_child(right)
             left = op_node
         return left
 
     def _parse_term(self) -> ASTNode:
-        """
-        Term → IDENTIFIER [ '(' ArgList? ')' ] | NUMBER | CHAR | STRING
-             | '(' Expression ')'
-             | UnaryOp Term
-        """
-        token = self._current()
-        if token is None:
+        tok = self._cur()
+        if tok is None:
             raise ParseError("Unexpected end of input in expression", 1)
 
-        # Parenthesised expression
-        if token.type == "SYMBOL" and token.value == "(":
-            self._match(expected_type="SYMBOL", expected_value="(")
+        # Parenthesized expression: ( expr )
+        if tok.type == "SYMBOL" and tok.value == "(":
+            self._match("SYMBOL", "(")
             inner = self._parse_expression()
-            self._match(expected_type="SYMBOL", expected_value=")")
+            self._match("SYMBOL", ")")
             return inner
 
-        # Unary operators: -, !, ~, &, *
-        if token.type == "OPERATOR" and token.value in ("-", "!", "~", "&", "*", "++", "--"):
-            op = self._match(expected_type="OPERATOR")
+        # Initializer lists: { expr1, expr2, ... }
+        if tok.type == "SYMBOL" and tok.value == "{":
+            lbrace = self._match("SYMBOL", "{")
+            elements = []
+            if not (self._cur() and self._cur().type == "SYMBOL" and self._cur().value == "}"):
+                elements.append(self._parse_expression())
+                while self._cur() and self._cur().type == "SYMBOL" and self._cur().value == ",":
+                    self._advance()
+                    elements.append(self._parse_expression())
+            self._match("SYMBOL", "}")
+            node = ASTNode("InitializerList", line=lbrace.line)
+            for el in elements:
+                node.add_child(el)
+            return node
+
+        # Unary operators: -x, !x, etc.
+        if tok.type == "OPERATOR" and tok.value in ("-", "!", "~", "&", "*", "++", "--"):
+            op = self._match("OPERATOR")
             operand = self._parse_term()
             node = binary_op_node(f"unary{op.value}")
             node.add_child(operand)
             return node
 
-        if token.type == "IDENTIFIER":
-            ident = self._match(expected_type="IDENTIFIER")
-            if self._current() and self._current().type == "SYMBOL" and self._current().value == "(":
-                self._match(expected_type="SYMBOL", expected_value="(")
-                args: List[ASTNode] = []
-                if not (self._current() and self._current().type == "SYMBOL" and self._current().value == ")"):
+        if tok.type == "IDENTIFIER":
+            ident = self._match("IDENTIFIER")
+            # Function calls: foo(arg1, arg2)
+            if self._cur() and self._cur().type == "SYMBOL" and self._cur().value == "(":
+                self._match("SYMBOL", "(")
+                args = []
+                if not (self._cur() and self._cur().type == "SYMBOL" and self._cur().value == ")"):
                     args.append(self._parse_expression())
-                    while self._current() and self._current().type == "SYMBOL" and self._current().value == ",":
+                    while self._cur() and self._cur().type == "SYMBOL" and self._cur().value == ",":
                         self._advance()
                         args.append(self._parse_expression())
-                self._match(expected_type="SYMBOL", expected_value=")")
+                self._match("SYMBOL", ")")
                 call = call_expression_node(ident.value, line=ident.line)
-                for a in args:
-                    call.add_child(a)
+                for arg in args:
+                    call.add_child(arg)
                 return call
-            if self._current() and self._current().type == "SYMBOL" and self._current().value == "[":
+
+            # Simple array index subscript: arr[index]
+            if self._cur() and self._cur().type == "SYMBOL" and self._cur().value == "[":
                 self._advance()
                 self._parse_expression()
-                if self._current() and self._current().value == "]":
+                if self._cur() and self._cur().value == "]":
                     self._advance()
+
             return identifier_node(ident.value, line=ident.line)
 
-        if token.type == "NUMBER":
-            num = self._match(expected_type="NUMBER")
-            try: val = int(num.value, 0)
-            except ValueError: val = float(num.value)
+        if tok.type == "NUMBER":
+            num = self._match("NUMBER")
+            try:
+                val = int(num.value, 0)
+            except ValueError:
+                val = float(num.value)
             return number_node(val, line=num.line)
 
-        if token.type in ("STRING", "CHAR"):
+        if tok.type in ("STRING", "CHAR"):
             s = self._match()
-            return string_node(s.value, line=s.line)
+            node = string_node(s.value, line=s.line)
+            node.meta["literal_type"] = "char" if tok.type == "CHAR" else "string"
+            return node
 
-        raise ParseError(f"Expected expression, got '{token.value}'", token.line)
+        raise ParseError(f"Expected expression, got '{tok.value}'", tok.line)
 
 
 def parse(tokens: List[Token]) -> ASTNode:
-    """Convenience function."""
     return Parser(tokens).parse()
-

@@ -1,256 +1,393 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Smart Static Code Analyzer</title>
-  <meta name="description" content="Advanced static analysis dashboard for C-like code — lexer, parser, AST, GCC, pycparser, and metrics." />
+  <meta name="description"
+    content="Advanced static analysis dashboard for C-like code — lexer, parser, AST, GCC, pycparser, and metrics." />
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+  <style>
+    .btn-fix {
+      margin-top: 0.5rem;
+      background: #2ea44f;
+      color: #ffffff;
+      border: 1px solid rgba(27, 31, 35, 0.15);
+      border-radius: 6px;
+      padding: 0.35rem 0.7rem;
+      font-size: 0.76rem;
+      font-weight: 600;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      transition: background-color 0.2s, transform 0.1s;
+    }
+
+    .btn-fix:hover {
+      background-color: #2c974b;
+    }
+
+    .btn-fix:active {
+      transform: scale(0.98);
+    }
+
+    .btn-fix-sm {
+      background-color: #2ea44f;
+      color: #ffffff;
+      border: none;
+      border-radius: 4px;
+      padding: 0.2rem 0.5rem;
+      font-size: 0.72rem;
+      font-weight: 600;
+      cursor: pointer;
+      margin-left: 0.6rem;
+      transition: background-color 0.2s;
+    }
+
+    .btn-fix-sm:hover {
+      background-color: #2c974b;
+    }
+
+    /* ══════════════ AST Tree Graph Styling ══════════════ */
+    .ast-svg-node {
+      transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+      cursor: pointer;
+    }
+    .ast-svg-node:hover {
+      transform: scale(1.04);
+    }
+    .ast-svg-node-bg {
+      stroke-width: 1.5;
+      rx: 8;
+      ry: 8;
+      filter: url(#ast-shadow);
+      transition: fill 0.2s, stroke 0.2s;
+    }
+    .ast-svg-node:hover .ast-svg-node-bg {
+      stroke-width: 2px;
+    }
+    .ast-svg-node-accent {
+      rx: 4;
+      ry: 4;
+    }
+    .ast-svg-node-text-type {
+      font-family: var(--mono);
+      font-size: 11px;
+      font-weight: 600;
+      pointer-events: none;
+    }
+    .ast-svg-node-text-val {
+      font-family: var(--mono);
+      font-size: 10px;
+      font-weight: 500;
+      pointer-events: none;
+    }
+    .ast-svg-link {
+      fill: none;
+      stroke: var(--border-dark);
+      stroke-width: 2px;
+      stroke-linecap: round;
+      transition: d 0.25s ease, stroke 0.25s ease;
+    }
+    .ast-svg-node:hover ~ .ast-svg-link {
+      stroke: var(--accent);
+    }
+    .ast-node-toggle-circle {
+      cursor: pointer;
+      transition: fill 0.2s, stroke 0.2s;
+    }
+    .ast-node-toggle-circle:hover {
+      fill: var(--accent-light);
+    }
+    .ast-node-toggle-plusminus {
+      font-family: var(--font);
+      font-size: 11px;
+      font-weight: bold;
+      pointer-events: none;
+      text-anchor: middle;
+      dominant-baseline: central;
+    }
+  </style>
 </head>
+
 <body>
 
-<!-- ═══════════════════ NAVBAR ═══════════════════ -->
-<nav class="navbar" id="navbar">
-  <div class="nav-brand">
-    <div class="brand-icon">⚙</div>
-    <span class="brand-name">CodeAnalyzer</span>
-    <span class="brand-version">v2.0</span>
-  </div>
-
-  <div class="nav-links">
-    <button class="nav-btn active" id="btn-analyzer">Analyzer</button>
-    <button class="nav-btn" id="btn-history">History</button>
-  </div>
-
-  <div class="nav-actions">
-    <div class="export-wrapper">
-      <button class="btn-outline" id="export-btn">Export ↓</button>
-      <div class="export-menu hidden" id="export-menu">
-        <button onclick="exportData('tokens')">⬇ Tokens (JSON)</button>
-        <button onclick="exportData('ast')">⬇ AST (JSON)</button>
-        <button onclick="exportData('full')">⬇ Full Report (JSON)</button>
-      </div>
-    </div>
-    <div class="status-dot" id="status-dot" title="Ready"></div>
-  </div>
-</nav>
-
-<!-- ═══════════════════ STATS CARDS ═══════════════════ -->
-<div class="stats-row">
-  <div class="stat-card" id="card-tokens">
-    <div class="stat-value" id="sv-tokens">—</div>
-    <div class="stat-label">Total Tokens</div>
-  </div>
-  <div class="stat-card" id="card-errors">
-    <div class="stat-value" id="sv-errors">—</div>
-    <div class="stat-label">Errors</div>
-  </div>
-  <div class="stat-card" id="card-functions">
-    <div class="stat-value" id="sv-functions">—</div>
-    <div class="stat-label">Functions</div>
-  </div>
-  <div class="stat-card" id="card-variables">
-    <div class="stat-value" id="sv-variables">—</div>
-    <div class="stat-label">Variables</div>
-  </div>
-  <div class="stat-card" id="card-depth">
-    <div class="stat-value" id="sv-depth">—</div>
-    <div class="stat-label">AST Depth</div>
-  </div>
-</div>
-
-<!-- ═══════════════════ WORKSPACE ═══════════════════ -->
-<div class="workspace">
-
-  <!-- ─── LEFT: Code Editor ─── -->
-  <div class="panel editor-panel">
-    <div class="panel-header">
-      <div class="panel-title">📝 Source Code</div>
-      <div class="toolbar">
-        <select id="preset-select" class="preset-select" title="Load a sample snippet">
-          <option value="">▾ Load Preset</option>
-          <option value="hello">Hello World</option>
-          <option value="variables">Variables</option>
-          <option value="arithmetic">Arithmetic</option>
-          <option value="function">Function Def</option>
-          <option value="complex">Complex</option>
-          <option value="multiline">Multi-block</option>
-          <option value="headers">With #include Headers</option>
-          <option value="printf">stdio printf example</option>
-        </select>
-
-        <!-- File Upload -->
-        <input type="file" id="file-upload" accept=".c,.h,.txt" style="display:none" />
-        <button class="btn-upload" id="upload-btn" title="Upload a .c file" onclick="document.getElementById('file-upload').click()">
-          ↑ Upload .c
-        </button>
-
-        <button class="btn-primary" id="analyze-btn" title="Ctrl+Enter">⚡ Analyze</button>
-      </div>
+  <!-- ═══════════════════ NAVBAR ═══════════════════ -->
+  <nav class="navbar" id="navbar">
+    <div class="nav-brand">
+      <div class="brand-icon">⚙</div>
+      <span class="brand-name">CodeAnalyzer</span>
+      <span class="brand-version">v2.0</span>
     </div>
 
-    <div class="editor-wrapper" id="editor-wrapper">
-      <div class="line-numbers" id="line-numbers"><span>1</span></div>
-      <textarea
-        id="code-editor"
-        spellcheck="false"
-        autocorrect="off"
-        autocapitalize="off"
-        placeholder="Enter C-like code here…"
-      >int main() {
+    <div class="nav-links">
+      <button class="nav-btn active" id="btn-analyzer">Analyzer</button>
+      <button class="nav-btn" id="btn-history">History</button>
+    </div>
+
+    <div class="nav-actions">
+      <div class="export-wrapper">
+        <button class="btn-outline" id="export-btn">Export ↓</button>
+        <div class="export-menu hidden" id="export-menu">
+          <button onclick="exportData('tokens')">⬇ Tokens (JSON)</button>
+          <button onclick="exportData('ast')">⬇ AST (JSON)</button>
+          <button onclick="exportData('full')">⬇ Full Report (JSON)</button>
+        </div>
+      </div>
+      <div class="status-dot" id="status-dot" title="Ready"></div>
+    </div>
+  </nav>
+
+  <!-- ═══════════════════ STATS CARDS ═══════════════════ -->
+  <div class="stats-row">
+    <div class="stat-card" id="card-tokens">
+      <div class="stat-value" id="sv-tokens">—</div>
+      <div class="stat-label">Total Tokens</div>
+    </div>
+    <div class="stat-card" id="card-errors">
+      <div class="stat-value" id="sv-errors">—</div>
+      <div class="stat-label">Errors</div>
+    </div>
+    <div class="stat-card" id="card-functions">
+      <div class="stat-value" id="sv-functions">—</div>
+      <div class="stat-label">Functions</div>
+    </div>
+    <div class="stat-card" id="card-variables">
+      <div class="stat-value" id="sv-variables">—</div>
+      <div class="stat-label">Variables</div>
+    </div>
+    <div class="stat-card" id="card-depth">
+      <div class="stat-value" id="sv-depth">—</div>
+      <div class="stat-label">AST Depth</div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════ WORKSPACE ═══════════════════ -->
+  <div class="workspace">
+
+    <!-- ─── LEFT: Code Editor ─── -->
+    <div class="panel editor-panel">
+      <div class="panel-header">
+        <div class="panel-title">📝 Source Code</div>
+        <div class="toolbar">
+          <select id="preset-select" class="preset-select" title="Load a sample snippet">
+            <option value="">▾ Load Preset</option>
+            <option value="hello">Hello World</option>
+            <option value="variables">Variables</option>
+            <option value="arithmetic">Arithmetic</option>
+            <option value="function">Function Def</option>
+            <option value="complex">Complex</option>
+            <option value="multiline">Multi-block</option>
+            <option value="headers">With #include Headers</option>
+            <option value="printf">stdio printf example</option>
+          </select>
+
+          <!-- File Upload -->
+          <input type="file" id="file-upload" accept=".c,.h,.txt" style="display:none" />
+          <button class="btn-upload" id="upload-btn" title="Upload a .c file"
+            onclick="document.getElementById('file-upload').click()">
+            ↑ Upload .c
+          </button>
+
+          <button class="btn-primary" id="analyze-btn" title="Ctrl+Enter">⚡ Analyze</button>
+        </div>
+      </div>
+
+      <div class="editor-wrapper" id="editor-wrapper">
+        <div class="line-numbers" id="line-numbers"><span>1</span></div>
+        <textarea id="code-editor" spellcheck="false" autocorrect="off" autocapitalize="off"
+          placeholder="Enter C-like code here…">int main() {
     int x = 10;
     int y = x + 5;
     return y;
 }</textarea>
-    </div>
+      </div>
 
-    <div class="editor-footer">
-      <span id="cursor-pos">Ln 1, Col 1</span>
-      <span>C-like · Ctrl+Enter to analyze</span>
-      <span id="char-count">0 chars</span>
-    </div>
-  </div>
-
-  <!-- ─── RIGHT: Output Panel ─── -->
-  <div class="panel output-panel">
-    <div class="panel-header" style="padding-top:.35rem;padding-bottom:0;align-items:flex-end;">
-      <div class="tab-bar" id="tab-bar">
-        <button class="tab active" data-tab="tokens">Tokens <span class="tab-badge" id="tok-badge">0</span></button>
-        <button class="tab" data-tab="ast">AST</button>
-        <button class="tab" data-tab="gcc">GCC <span class="tab-badge" id="gcc-tab-badge">—</span></button>
-        <button class="tab" data-tab="pycparser">pycparser</button>
-        <button class="tab" data-tab="metrics">Metrics</button>
-        <button class="tab" data-tab="semantic">Semantic <span class="tab-badge" id="sem-tab-badge">0</span></button>
+      <div class="editor-footer">
+        <span id="cursor-pos">Ln 1, Col 1</span>
+        <span>C-like · Ctrl+Enter to analyze</span>
+        <span id="char-count">0 chars</span>
       </div>
     </div>
 
-    <div class="tab-content" id="tab-content">
-
-      <!-- Tokens -->
-      <div class="tab-pane" id="tab-tokens">
-        <div class="empty-state" id="tok-empty">
-          <div class="empty-icon">🔤</div>
-          <span>Run analysis to see tokens</span>
-        </div>
-        <div class="hidden" id="tok-table-wrap">
-          <table class="token-table">
-            <thead><tr><th>Line</th><th>Type</th><th>Value</th></tr></thead>
-            <tbody id="tok-tbody"></tbody>
-          </table>
+    <!-- ─── RIGHT: Output Panel ─── -->
+    <div class="panel output-panel">
+      <div class="panel-header" style="padding-top:.35rem;padding-bottom:0;align-items:flex-end;">
+        <div class="tab-bar" id="tab-bar">
+          <button class="tab active" data-tab="tokens">Tokens <span class="tab-badge" id="tok-badge">0</span></button>
+          <button class="tab" data-tab="ast">AST</button>
+          <button class="tab" data-tab="gcc">GCC <span class="tab-badge" id="gcc-tab-badge">—</span></button>
+          <button class="tab" data-tab="pycparser">pycparser</button>
+          <button class="tab" data-tab="metrics">Metrics</button>
+          <button class="tab" data-tab="semantic">Semantic <span class="tab-badge" id="sem-tab-badge">0</span></button>
         </div>
       </div>
 
-      <!-- AST -->
-      <div class="tab-pane hidden" id="tab-ast">
-        <div class="ast-controls" id="ast-ctrls" style="display:none">
-          <button class="btn-sm" onclick="expandAllAST()">Expand All</button>
-          <button class="btn-sm" onclick="collapseAllAST()">Collapse All</button>
+      <div class="tab-content" id="tab-content">
+
+        <!-- Tokens -->
+        <div class="tab-pane" id="tab-tokens">
+          <div class="empty-state" id="tok-empty">
+            <div class="empty-icon">🔤</div>
+            <span>Run analysis to see tokens</span>
+          </div>
+          <div class="hidden" id="tok-table-wrap">
+            <table class="token-table">
+              <thead>
+                <tr>
+                  <th>Line</th>
+                  <th>Type</th>
+                  <th>Value</th>
+                </tr>
+              </thead>
+              <tbody id="tok-tbody"></tbody>
+            </table>
+          </div>
         </div>
-        <div id="ast-tree">
-          <div class="empty-state"><div class="empty-icon">🌲</div><span>Run analysis to see AST</span></div>
+
+        <!-- AST -->
+        <div class="tab-pane hidden" id="tab-ast" style="height: 100%; display: flex; flex-direction: column; overflow: hidden; padding: 0.5rem;">
+          <div class="ast-controls" id="ast-ctrls" style="display:none; justify-content: space-between; align-items: center; margin-bottom: 0.5rem; flex-shrink: 0;">
+            <div style="display: flex; gap: 0.4rem;">
+              <button class="btn-sm" onclick="expandAllAST()">📂 Expand All</button>
+              <button class="btn-sm" onclick="collapseAllAST()">📁 Collapse All</button>
+              <button class="btn-sm" onclick="resetASTZoom()">🎯 Center View</button>
+            </div>
+            <span style="font-size: 0.72rem; color: var(--text-muted);">🖱️ Drag to Pan · Scroll to Zoom · Click Node to Toggle</span>
+          </div>
+          <div id="ast-tree-container" style="flex: 1; min-height: 480px; position: relative; border-radius: 8px; border: 1px solid var(--border); background: #fafbfc; overflow: hidden; display: flex; align-items: stretch; justify-content: stretch;">
+            <div class="empty-state" id="ast-empty" style="position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 10;">
+              <div class="empty-icon">🌲</div><span>Run analysis to see AST</span>
+            </div>
+            <svg id="ast-svg" style="width: 100%; height: 100%; display: none; cursor: grab; outline: none; user-select: none;">
+              <!-- Beautiful background grid -->
+              <defs>
+                <pattern id="ast-grid" width="25" height="25" patternUnits="userSpaceOnUse">
+                  <path d="M 25 0 L 0 0 0 25" fill="none" stroke="#eef0f3" stroke-width="1.2" />
+                </pattern>
+                <filter id="ast-shadow" x="-20%" y="-20%" width="140%" height="140%">
+                  <feDropShadow dx="0" dy="2" stdDeviation="2.5" flood-color="#000000" flood-opacity="0.06" />
+                </filter>
+              </defs>
+              <rect width="100%" height="100%" fill="url(#ast-grid)" />
+              <g id="ast-viewport">
+                <g id="ast-links-group"></g>
+                <g id="ast-nodes-group"></g>
+              </g>
+            </svg>
+          </div>
         </div>
-      </div>
 
-      <!-- GCC -->
-      <div class="tab-pane hidden" id="tab-gcc">
-        <div id="gcc-content">
-          <div class="empty-state"><div class="empty-icon">🔨</div><span>Run analysis to see GCC results</span></div>
+        <!-- GCC -->
+        <div class="tab-pane hidden" id="tab-gcc">
+          <div id="gcc-content">
+            <div class="empty-state">
+              <div class="empty-icon">🔨</div><span>Run analysis to see GCC results</span>
+            </div>
+          </div>
         </div>
-      </div>
 
-      <!-- pycparser -->
-      <div class="tab-pane hidden" id="tab-pycparser">
-        <div id="pyc-content">
-          <div class="empty-state"><div class="empty-icon">🧩</div><span>Run analysis to see pycparser results</span></div>
+        <!-- pycparser -->
+        <div class="tab-pane hidden" id="tab-pycparser">
+          <div id="pyc-content">
+            <div class="empty-state">
+              <div class="empty-icon">🧩</div><span>Run analysis to see pycparser results</span>
+            </div>
+          </div>
         </div>
-      </div>
 
-      <!-- Metrics -->
-      <div class="tab-pane hidden" id="tab-metrics">
-        <div id="metrics-content">
-          <div class="empty-state"><div class="empty-icon">📊</div><span>Run analysis to see metrics</span></div>
+        <!-- Metrics -->
+        <div class="tab-pane hidden" id="tab-metrics">
+          <div id="metrics-content">
+            <div class="empty-state">
+              <div class="empty-icon">📊</div><span>Run analysis to see metrics</span>
+            </div>
+          </div>
         </div>
-      </div>
 
-      <!-- Semantic Analysis -->
-      <div class="tab-pane hidden" id="tab-semantic">
-        <div id="semantic-content">
-          <div class="empty-state"><div class="empty-icon">🔎</div><span>Run analysis to see semantic results</span></div>
+        <!-- Semantic Analysis -->
+        <div class="tab-pane hidden" id="tab-semantic">
+          <div id="semantic-content">
+            <div class="empty-state">
+              <div class="empty-icon">🔎</div><span>Run analysis to see semantic results</span>
+            </div>
+          </div>
         </div>
-      </div>
 
-    </div><!-- /tab-content -->
-  </div><!-- /output-panel -->
+      </div><!-- /tab-content -->
+    </div><!-- /output-panel -->
 
-</div><!-- /workspace -->
+  </div><!-- /workspace -->
 
-<!-- ═══════════════════ ERRORS PANEL ═══════════════════ -->
-<div class="errors-panel hidden" id="errors-panel">
-  <div class="errors-header">
-    <span>⚠ Analysis Errors</span>
-    <button onclick="document.getElementById('errors-panel').classList.add('hidden')" title="Dismiss">✕</button>
+  <!-- ═══════════════════ ERRORS PANEL ═══════════════════ -->
+  <div class="errors-panel hidden" id="errors-panel">
+    <div class="errors-header">
+      <span>⚠ Analysis Errors</span>
+      <button onclick="document.getElementById('errors-panel').classList.add('hidden')" title="Dismiss">✕</button>
+    </div>
+    <ul id="errors-list"></ul>
   </div>
-  <ul id="errors-list"></ul>
-</div>
 
-<!-- ═══════════════════ STATUS BAR ═══════════════════ -->
-<div class="status-bar">
-  <span id="status-msg">Ready — paste or type C-like code, then click Analyze or press Ctrl+Enter.</span>
-  <div class="status-right">
-    <span id="gcc-status">GCC: —</span>
-    <span id="pyc-status">pycparser: —</span>
-    <span id="analyze-time"></span>
-  </div>
-</div>
-
-<!-- ═══════════════════ HISTORY DRAWER ═══════════════════ -->
-<div class="drawer-overlay hidden" id="drawer-overlay"></div>
-<div class="history-drawer hidden" id="history-drawer">
-  <div class="drawer-header">
-    <h3>Analysis History</h3>
-    <div class="drawer-actions">
-      <button class="btn-sm danger" onclick="clearHistory()">Clear All</button>
-      <button class="drawer-close" id="close-drawer">✕</button>
+  <!-- ═══════════════════ STATUS BAR ═══════════════════ -->
+  <div class="status-bar">
+    <span id="status-msg">Ready — paste or type C-like code, then click Analyze or press Ctrl+Enter.</span>
+    <div class="status-right">
+      <span id="gcc-status">GCC: —</span>
+      <span id="pyc-status">pycparser: —</span>
+      <span id="analyze-time"></span>
     </div>
   </div>
-  <div class="history-list" id="history-list">
-    <div class="empty-state"><span>No history yet</span></div>
+
+  <!-- ═══════════════════ HISTORY DRAWER ═══════════════════ -->
+  <div class="drawer-overlay hidden" id="drawer-overlay"></div>
+  <div class="history-drawer hidden" id="history-drawer">
+    <div class="drawer-header">
+      <h3>Analysis History</h3>
+      <div class="drawer-actions">
+        <button class="btn-sm danger" onclick="clearHistory()">Clear All</button>
+        <button class="drawer-close" id="close-drawer">✕</button>
+      </div>
+    </div>
+    <div class="history-list" id="history-list">
+      <div class="empty-state"><span>No history yet</span></div>
+    </div>
   </div>
-</div>
 
-<!-- ═══════════════════ JAVASCRIPT ═══════════════════ -->
-<script>
-"use strict";
+  <!-- ═══════════════════ JAVASCRIPT ═══════════════════ -->
+  <script>
+    "use strict";
 
-/* ─── State ─────────────────────────────────────────── */
-let lastResult = null;
-let currentTab = "tokens";
+    /* ─── State ─────────────────────────────────────────── */
+    let lastResult = null;
+    let currentTab = "tokens";
 
-/* ─── Presets ────────────────────────────────────────── */
-const PRESETS = {
-  hello:
-`int main() {
+    /* ─── Presets ────────────────────────────────────────── */
+    const PRESETS = {
+      hello:
+        `int main() {
     return 0;
 }`,
-  variables:
-`int a;
+      variables:
+        `int a;
 int b;
 a = 5;
 b = a + 10;
 return b;`,
-  arithmetic:
-`int x = 1;
+      arithmetic:
+        `int x = 1;
 int y = 2;
 int z = x + y - 1;
 return z;`,
-  function:
-`int add() {
+      function:
+        `int add() {
     int a = 10;
     int b = 20;
     return a;
 }`,
-  complex:
-`int main() {
+      complex:
+        `int main() {
     int a = 1;
     int b = a + 2;
     {
@@ -259,8 +396,8 @@ return z;`,
     }
     return a;
 }`,
-  multiline:
-`int foo() {
+      multiline:
+        `int foo() {
     int i = 0;
     {
         int j = i + 1;
@@ -271,8 +408,8 @@ return z;`,
     }
     return i;
 }`,
-  headers:
-`#include <stdio.h>
+      headers:
+        `#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -281,8 +418,8 @@ int main() {
     int y = x + 5;
     return 0;
 }`,
-  printf:
-`#include <stdio.h>
+      printf:
+        `#include <stdio.h>
 
 // Entry point
 int main() {
@@ -291,175 +428,514 @@ int main() {
     printf("Hello, World!");
     return 0;
 }`,
-};
+    };
 
-/* ─── DOM refs ───────────────────────────────────────── */
-const codeEditor   = document.getElementById("code-editor");
-const lineNumbers  = document.getElementById("line-numbers");
-const analyzeBtn   = document.getElementById("analyze-btn");
+    /* ─── DOM refs ───────────────────────────────────────── */
+    const codeEditor = document.getElementById("code-editor");
+    const lineNumbers = document.getElementById("line-numbers");
+    const analyzeBtn = document.getElementById("analyze-btn");
 
-/* ─── Core: Analyze ──────────────────────────────────── */
-async function analyzeCode() {
-  const code = codeEditor.value;
-  if (!code.trim()) return;
+    /* ─── Core: Analyze ──────────────────────────────────── */
+    async function analyzeCode() {
+      const code = codeEditor.value;
+      if (!code.trim()) return;
 
-  setLoading(true);
-  const t0 = performance.now();
+      setLoading(true);
+      const t0 = performance.now();
 
-  try {
-    const res = await fetch("/analyze", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ code }),
+      try {
+        const res = await fetch("/analyze", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ code }),
+        });
+        const data = await res.json();
+        const elapsed = ((performance.now() - t0) / 1000).toFixed(3);
+
+        lastResult = data;
+        updateStats(data);
+        renderCurrentTab();
+        updateStatusBar(data, elapsed);
+        if (data.errors && data.errors.length) showErrors(data.errors);
+        else hideErrors();
+        loadHistory();
+
+      } catch (err) {
+        showErrors([`Network error: ${err.message}`]);
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    /* ─── Stats Cards ────────────────────────────────────── */
+    function updateStats(data) {
+      const toks = (data.tokens || []).length;
+      const m = data.metrics || {};
+      const sem = data.semantic || {};
+      const fns = (m.functions || []).length;
+      const vars = (m.variables || []).length;
+      const dep = m.ast_depth != null ? m.ast_depth : "—";
+
+      // Prefer semantic error count; fall back to parse error count
+      const semErrs = sem.error_count != null ? sem.error_count : (data.errors || []).length;
+      const semWarn = sem.warning_count || 0;
+      const totalIssues = semErrs + semWarn;
+
+      setStatVal("sv-tokens", toks);
+      setStatVal("sv-errors", semErrs > 0 ? semErrs + " err" : semWarn > 0 ? semWarn + " warn" : "0");
+      setStatVal("sv-functions", fns);
+      setStatVal("sv-variables", vars);
+      setStatVal("sv-depth", dep);
+
+      const eCard = document.getElementById("card-errors");
+      eCard.className = "stat-card " + (semErrs > 0 ? "error" : semWarn > 0 ? "warn" : "success");
+
+      // Semantic tab badge
+      const semBadge = document.getElementById("sem-tab-badge");
+      if (semBadge) semBadge.textContent = totalIssues;
+    }
+    function setStatVal(id, v) {
+      const el = document.getElementById(id);
+      if (el) { el.textContent = v; el.classList.add("fade-in"); }
+    }
+
+    /* ─── Tab Routing ────────────────────────────────────── */
+    function renderCurrentTab() {
+      switch (currentTab) {
+        case "tokens": renderTokens(); break;
+        case "ast": renderAST(); break;
+        case "gcc": renderGCC(); break;
+        case "pycparser": renderPycparser(); break;
+        case "metrics": renderMetrics(); break;
+        case "semantic": renderSemantic(); break;
+      }
+    }
+
+    document.getElementById("tab-bar").addEventListener("click", e => {
+      const tab = e.target.closest("[data-tab]");
+      if (!tab) return;
+      currentTab = tab.dataset.tab;
+      document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
+      tab.classList.add("active");
+      document.querySelectorAll(".tab-pane").forEach(p => {
+        const isActive = p.id === `tab-${currentTab}`;
+        p.classList.toggle("hidden", !isActive);
+      });
+      if (lastResult) renderCurrentTab();
     });
-    const data = await res.json();
-    const elapsed = ((performance.now() - t0) / 1000).toFixed(3);
 
-    lastResult = data;
-    updateStats(data);
-    renderCurrentTab();
-    updateStatusBar(data, elapsed);
-    if (data.errors && data.errors.length) showErrors(data.errors);
-    else hideErrors();
-    loadHistory();
+    /* ─── Tokens ─────────────────────────────────────────── */
+    function renderTokens() {
+      if (!lastResult) return;
+      const tokens = lastResult.tokens || [];
+      const empty = document.getElementById("tok-empty");
+      const wrapper = document.getElementById("tok-table-wrap");
 
-  } catch (err) {
-    showErrors([`Network error: ${err.message}`]);
-  } finally {
-    setLoading(false);
-  }
-}
+      if (!tokens.length) {
+        empty.classList.remove("hidden"); wrapper.classList.add("hidden"); return;
+      }
+      empty.classList.add("hidden"); wrapper.classList.remove("hidden");
 
-/* ─── Stats Cards ────────────────────────────────────── */
-function updateStats(data) {
-  const toks = (data.tokens || []).length;
-  const m    = data.metrics || {};
-  const sem  = data.semantic || {};
-  const fns  = (m.functions || []).length;
-  const vars = (m.variables || []).length;
-  const dep  = m.ast_depth != null ? m.ast_depth : "—";
-
-  // Prefer semantic error count; fall back to parse error count
-  const semErrs = sem.error_count != null ? sem.error_count : (data.errors || []).length;
-  const semWarn = sem.warning_count || 0;
-  const totalIssues = semErrs + semWarn;
-
-  setStatVal("sv-tokens",    toks);
-  setStatVal("sv-errors",    semErrs > 0 ? semErrs + " err" : semWarn > 0 ? semWarn + " warn" : "0");
-  setStatVal("sv-functions", fns);
-  setStatVal("sv-variables", vars);
-  setStatVal("sv-depth",     dep);
-
-  const eCard = document.getElementById("card-errors");
-  eCard.className = "stat-card " + (semErrs > 0 ? "error" : semWarn > 0 ? "warn" : "success");
-
-  // Semantic tab badge
-  const semBadge = document.getElementById("sem-tab-badge");
-  if (semBadge) semBadge.textContent = totalIssues;
-}
-function setStatVal(id, v) {
-  const el = document.getElementById(id);
-  if (el) { el.textContent = v; el.classList.add("fade-in"); }
-}
-
-/* ─── Tab Routing ────────────────────────────────────── */
-function renderCurrentTab() {
-  switch (currentTab) {
-    case "tokens":    renderTokens();    break;
-    case "ast":       renderAST();       break;
-    case "gcc":       renderGCC();       break;
-    case "pycparser": renderPycparser(); break;
-    case "metrics":   renderMetrics();  break;
-    case "semantic":  renderSemantic(); break;
-  }
-}
-
-document.getElementById("tab-bar").addEventListener("click", e => {
-  const tab = e.target.closest("[data-tab]");
-  if (!tab) return;
-  currentTab = tab.dataset.tab;
-  document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
-  tab.classList.add("active");
-  document.querySelectorAll(".tab-pane").forEach(p => {
-    const isActive = p.id === `tab-${currentTab}`;
-    p.classList.toggle("hidden", !isActive);
-  });
-  if (lastResult) renderCurrentTab();
-});
-
-/* ─── Tokens ─────────────────────────────────────────── */
-function renderTokens() {
-  if (!lastResult) return;
-  const tokens = lastResult.tokens || [];
-  const empty   = document.getElementById("tok-empty");
-  const wrapper = document.getElementById("tok-table-wrap");
-
-  if (!tokens.length) {
-    empty.classList.remove("hidden"); wrapper.classList.add("hidden"); return;
-  }
-  empty.classList.add("hidden"); wrapper.classList.remove("hidden");
-
-  document.getElementById("tok-tbody").innerHTML = tokens.map(t =>
-    `<tr class="token-row">
+      document.getElementById("tok-tbody").innerHTML = tokens.map(t =>
+        `<tr class="token-row">
       <td class="token-line">${t.line}</td>
       <td><span class="badge badge-${t.type.toLowerCase()}">${t.type}</span></td>
       <td class="token-value"><code>${esc(t.value)}</code></td>
     </tr>`
-  ).join("");
-  document.getElementById("tok-badge").textContent = tokens.length;
-}
+      ).join("");
+      document.getElementById("tok-badge").textContent = tokens.length;
+    }
 
-/* ─── AST ────────────────────────────────────────────── */
-function buildASTHTML(node) {
-  if (!node) return "";
-  const val = (node.value !== null && node.value !== undefined)
-    ? `<span class="ast-value">${esc(String(node.value))}</span>` : "";
-  const kids = node.children || [];
+    /* ─── AST ────────────────────────────────────────────── */
+    /* ─── AST ────────────────────────────────────────────── */
+    function buildASTHTML(node) {
+      if (!node) return "";
+      const val = (node.value !== null && node.value !== undefined)
+        ? `<span class="ast-value">${esc(String(node.value))}</span>` : "";
+      const kids = node.children || [];
 
-  if (!kids.length) {
-    return `<div class="ast-leaf">
+      if (!kids.length) {
+        return `<div class="ast-leaf">
       <span class="ast-type">${node.type}</span>${val}
     </div>`;
-  }
-  return `<details open class="ast-node">
+      }
+      return `<details open class="ast-node">
     <summary class="ast-summary">
       <span class="ast-type">${node.type}</span>${val}
       <span class="ast-child-count">${kids.length} child${kids.length !== 1 ? "ren" : ""}</span>
     </summary>
     <div class="ast-children">${kids.map(buildASTHTML).join("")}</div>
   </details>`;
-}
+    }
 
-function renderAST() {
-  const tree = document.getElementById("ast-tree");
-  const ctrl = document.getElementById("ast-ctrls");
-  if (!lastResult || !lastResult.ast) {
-    tree.innerHTML = `<div class="empty-state"><div class="empty-icon">🌲</div><span>No AST (parse error?)</span></div>`;
-    ctrl.style.display = "none"; return;
-  }
-  tree.innerHTML = buildASTHTML(lastResult.ast);
-  ctrl.style.display = "flex";
-}
-function expandAllAST()   { document.querySelectorAll("#ast-tree details").forEach(d => d.open = true); }
-function collapseAllAST() { document.querySelectorAll("#ast-tree details").forEach(d => d.open = false); }
+    let currentAST = null;
+    let astPanX = 0;
+    let astPanY = 40;
+    let astScale = 1.0;
+    let isDraggingAST = false;
+    let astDragMoved = false;
+    let astMouseDownPos = { x: 0, y: 0 };
+    let dragStartAST = { x: 0, y: 0 };
 
-/* ─── GCC ────────────────────────────────────────────── */
-function renderGCC() {
-  const el = document.getElementById("gcc-content");
-  if (!lastResult || !lastResult.gcc) {
-    el.innerHTML = `<div class="empty-state"><div class="empty-icon">🔨</div><span>No GCC data</span></div>`;
-    return;
-  }
-  const g = lastResult.gcc;
-  const cls  = g.ok ? "success" : (g.gcc_found ? "error" : "warning");
-  const icon = g.ok ? "✓" : (g.gcc_found ? "✗" : "⚠");
-  const head = g.ok ? "Compilation Passed" : (g.gcc_found ? "Compilation Failed" : "GCC Not Found");
+    function prepareAST(node, counter = { val: 0 }) {
+      if (!node) return;
+      node.id = "ast-node-" + counter.val++;
+      if (node.expanded === undefined) {
+        node.expanded = true;
+      }
+      const kids = node.children || [];
+      for (const child of kids) {
+        prepareAST(child, counter);
+      }
+    }
 
-  document.getElementById("gcc-tab-badge").textContent = g.ok ? "✓" : "✗";
-  document.getElementById("gcc-status").textContent =
-    `GCC: ${g.gcc_found ? (g.ok ? "✓ Pass" : "✗ Fail") : "⚠ Not Found"}`;
+    function layoutASTTree(node, depth = 0, state = { leafCount: 0 }) {
+      if (!node) return;
+      const kids = node.children || [];
+      const isExpanded = node.expanded;
+      
+      if (!isExpanded || kids.length === 0) {
+        node.x = state.leafCount * 175; // wider spacing for readability
+        node.y = depth * 115 + 40;
+        state.leafCount++;
+      } else {
+        for (const child of kids) {
+          layoutASTTree(child, depth + 1, state);
+        }
+        const first = kids[0];
+        const last = kids[kids.length - 1];
+        node.x = (first.x + last.x) / 2;
+        node.y = depth * 115 + 40;
+      }
+    }
 
-  el.innerHTML = `
+    function truncateText(str, maxLen) {
+      if (!str) return "";
+      if (str.length <= maxLen) return str;
+      return str.substring(0, maxLen - 2) + "..";
+    }
+
+    function getNodeColors(type) {
+      const t = String(type).toUpperCase();
+      if (t === "PROGRAM" || t === "ROOT") {
+        return { bg: "#1f2937", accent: "#ffffff", border: "#4b5563" };
+      }
+      if (t.includes("DECL") || t.includes("INIT") || t.includes("TYPE")) {
+        return { bg: "#f0fdf4", accent: "#10b981", border: "#a7f3d0" };
+      }
+      if (t.includes("IF") || t.includes("WHILE") || t.includes("FOR") || t.includes("RETURN") || t.includes("BLOCK") || t === "COMPOUND") {
+        return { bg: "#f5f3ff", accent: "#8b5cf6", border: "#ddd6fe" };
+      }
+      if (t.includes("OP") || t.includes("ASSIGN") || t.includes("SUBSCRIPT") || t.includes("FUNC_CALL") || t.includes("CALL")) {
+        return { bg: "#eff6ff", accent: "#3b82f6", border: "#bfdbfe" };
+      }
+      if (t.includes("CONSTANT") || t.includes("LITERAL") || t.includes("NUM") || t.includes("STR") || t.includes("CHAR")) {
+        return { bg: "#fffbeb", accent: "#f59e0b", border: "#fde68a" };
+      }
+      if (t.includes("ID") || t.includes("VAR") || t.includes("SYMBOL")) {
+        return { bg: "#ecfeff", accent: "#06b6d4", border: "#cffafe" };
+      }
+      return { bg: "#f8fafc", accent: "#64748b", border: "#e2e8f0" };
+    }
+
+    function updateASTViewportTransform() {
+      const viewport = document.getElementById("ast-viewport");
+      if (viewport) {
+        viewport.setAttribute("transform", `translate(${astPanX}, ${astPanY}) scale(${astScale})`);
+      }
+    }
+
+    function resetASTZoom() {
+      if (!currentAST) return;
+      const svg = document.getElementById("ast-svg");
+      if (!svg) return;
+      const svgWidth = svg.clientWidth || svg.getBoundingClientRect().width || 800;
+      const svgHeight = svg.clientHeight || svg.getBoundingClientRect().height || 480;
+      
+      let minX = Infinity, maxX = -Infinity;
+      let minY = Infinity, maxY = -Infinity;
+      
+      function getBounds(n) {
+        if (n.x < minX) minX = n.x;
+        if (n.x > maxX) maxX = n.x;
+        if (n.y < minY) minY = n.y;
+        if (n.y > maxY) maxY = n.y;
+        const kids = n.children || [];
+        if (n.expanded && kids.length > 0) {
+          for (const c of kids) getBounds(c);
+        }
+      }
+      getBounds(currentAST);
+      
+      const treeWidth = maxX - minX;
+      const treeHeight = maxY - minY;
+      
+      const scaleX = (svgWidth - 160) / (treeWidth || 1);
+      const scaleY = (svgHeight - 120) / (treeHeight || 1);
+      astScale = Math.min(1.0, Math.min(scaleX, scaleY));
+      if (astScale < 0.2) astScale = 0.2;
+      
+      astPanX = (svgWidth / 2) - ((minX + maxX) / 2) * astScale;
+      astPanY = 60;
+      
+      updateASTViewportTransform();
+    }
+
+    function expandAllAST() {
+      if (!currentAST) return;
+      function setExp(n) {
+        n.expanded = true;
+        const kids = n.children || [];
+        for (const c of kids) setExp(c);
+      }
+      setExp(currentAST);
+      redrawAST();
+      resetASTZoom();
+    }
+
+    function collapseAllAST() {
+      if (!currentAST) return;
+      function setExp(n, isRoot = false) {
+        n.expanded = isRoot;
+        const kids = n.children || [];
+        for (const c of kids) setExp(c, false);
+      }
+      setExp(currentAST, true);
+      redrawAST();
+      resetASTZoom();
+    }
+
+    function renderAST() {
+      const svg = document.getElementById("ast-svg");
+      const empty = document.getElementById("ast-empty");
+      const ctrl = document.getElementById("ast-ctrls");
+      
+      if (!lastResult || !lastResult.ast) {
+        if (svg) svg.style.display = "none";
+        if (empty) empty.style.display = "flex";
+        if (ctrl) ctrl.style.display = "none";
+        return;
+      }
+      
+      if (currentAST !== lastResult.ast) {
+        currentAST = lastResult.ast;
+        prepareAST(currentAST);
+        setTimeout(() => {
+          resetASTZoom();
+        }, 50);
+      }
+      
+      if (svg) svg.style.display = "block";
+      if (empty) empty.style.display = "none";
+      if (ctrl) ctrl.style.display = "flex";
+      
+      redrawAST();
+    }
+
+    function redrawAST() {
+      if (!currentAST) return;
+      
+      layoutASTTree(currentAST, 0, { leafCount: 0 });
+      
+      const linksGroup = document.getElementById("ast-links-group");
+      const nodesGroup = document.getElementById("ast-nodes-group");
+      if (!linksGroup || !nodesGroup) return;
+      
+      linksGroup.innerHTML = "";
+      nodesGroup.innerHTML = "";
+      
+      function drawLink(parent, child) {
+        const startX = parent.x;
+        const startY = parent.y + 25;
+        const endX = child.x;
+        const endY = child.y - 25;
+        const midY = (startY + endY) / 2;
+        const path = `M ${startX} ${startY} C ${startX} ${midY}, ${endX} ${midY}, ${endX} ${endY}`;
+        
+        const pathEl = document.createElementNS("http://www.w3.org/2000/svg", "path");
+        pathEl.setAttribute("d", path);
+        pathEl.setAttribute("class", "ast-svg-link");
+        linksGroup.appendChild(pathEl);
+      }
+      
+      function drawNode(node) {
+        const colors = getNodeColors(node.type);
+        const hasKids = node.children && node.children.length > 0;
+        const isRoot = node.type === "Program" || node.type === "Root";
+        
+        const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
+        g.setAttribute("class", "ast-svg-node");
+        g.setAttribute("transform", `translate(${node.x}, ${node.y})`);
+        
+        // Background card rect
+        const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+        rect.setAttribute("class", "ast-svg-node-bg");
+        rect.setAttribute("x", "-70");
+        rect.setAttribute("y", "-25");
+        rect.setAttribute("width", "140");
+        rect.setAttribute("height", "50");
+        rect.setAttribute("fill", colors.bg);
+        rect.setAttribute("stroke", colors.border);
+        g.appendChild(rect);
+        
+        // Sidebar accent
+        const accent = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+        accent.setAttribute("class", "ast-svg-node-accent");
+        accent.setAttribute("x", "-70");
+        accent.setAttribute("y", "-25");
+        accent.setAttribute("width", "6");
+        accent.setAttribute("height", "50");
+        accent.setAttribute("fill", colors.accent);
+        g.appendChild(accent);
+        
+        // Type Text
+        const typeText = document.createElementNS("http://www.w3.org/2000/svg", "text");
+        typeText.setAttribute("class", "ast-svg-node-text-type");
+        typeText.setAttribute("x", "-56");
+        typeText.setAttribute("y", "-5");
+        typeText.setAttribute("fill", isRoot ? "#38bdf8" : (colors.accent === "#ffffff" ? "#cbd5e1" : colors.accent));
+        typeText.textContent = truncateText(node.type, 18);
+        g.appendChild(typeText);
+        
+        // Value Text
+        if (node.value !== null && node.value !== undefined) {
+          const valText = document.createElementNS("http://www.w3.org/2000/svg", "text");
+          valText.setAttribute("class", "ast-svg-node-text-val");
+          valText.setAttribute("x", "-56");
+          valText.setAttribute("y", "13");
+          valText.setAttribute("fill", isRoot ? "#ffffff" : "var(--text)");
+          valText.textContent = truncateText(String(node.value), 18);
+          g.appendChild(valText);
+        } else {
+          // Center vertically if no value exists
+          typeText.setAttribute("y", "5");
+        }
+        
+        // Expand circle toggle
+        if (hasKids) {
+          const toggleG = document.createElementNS("http://www.w3.org/2000/svg", "g");
+          
+          const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+          circle.setAttribute("class", "ast-node-toggle-circle");
+          circle.setAttribute("cx", "0");
+          circle.setAttribute("cy", "25");
+          circle.setAttribute("r", "7.5");
+          circle.setAttribute("fill", "#ffffff");
+          circle.setAttribute("stroke", colors.accent === "#ffffff" ? "#4b5563" : colors.accent);
+          circle.setAttribute("stroke-width", "1.5");
+          toggleG.appendChild(circle);
+          
+          const plusMinus = document.createElementNS("http://www.w3.org/2000/svg", "text");
+          plusMinus.setAttribute("class", "ast-node-toggle-plusminus");
+          plusMinus.setAttribute("x", "0");
+          plusMinus.setAttribute("y", "25.5");
+          plusMinus.setAttribute("fill", colors.accent === "#ffffff" ? "#4b5563" : colors.accent);
+          plusMinus.textContent = node.expanded ? "−" : "+";
+          toggleG.appendChild(plusMinus);
+          
+          g.appendChild(toggleG);
+        }
+        
+        // Node expansion interaction
+        g.addEventListener("click", e => {
+          e.stopPropagation();
+          if (astDragMoved) return;
+          node.expanded = !node.expanded;
+          redrawAST();
+        });
+        
+        nodesGroup.appendChild(g);
+      }
+      
+      function drawBranch(n) {
+        if (!n) return;
+        const kids = n.children || [];
+        if (n.expanded && kids.length > 0) {
+          for (const c of kids) {
+            drawLink(n, c);
+            drawBranch(c);
+          }
+        }
+        drawNode(n);
+      }
+      
+      drawBranch(currentAST);
+      updateASTViewportTransform();
+    }
+
+    function setupASTEventListeners() {
+      const svg = document.getElementById("ast-svg");
+      if (!svg) return;
+      
+      svg.addEventListener("mousedown", e => {
+        if (e.button !== 0) return;
+        isDraggingAST = true;
+        astDragMoved = false;
+        astMouseDownPos = { x: e.clientX, y: e.clientY };
+        svg.style.cursor = "grabbing";
+        dragStartAST = { x: e.clientX - astPanX, y: e.clientY - astPanY };
+      });
+      
+      window.addEventListener("mousemove", e => {
+        if (!isDraggingAST) return;
+        const dx = e.clientX - astMouseDownPos.x;
+        const dy = e.clientY - astMouseDownPos.y;
+        if (Math.abs(dx) > 4 || Math.abs(dy) > 4) {
+          astDragMoved = true;
+        }
+        astPanX = e.clientX - dragStartAST.x;
+        astPanY = e.clientY - dragStartAST.y;
+        updateASTViewportTransform();
+      });
+      
+      window.addEventListener("mouseup", () => {
+        if (isDraggingAST) {
+          isDraggingAST = false;
+          svg.style.cursor = "grab";
+        }
+      });
+      
+      svg.addEventListener("wheel", e => {
+        e.preventDefault();
+        const rect = svg.getBoundingClientRect();
+        const mouseX = e.clientX - rect.left;
+        const mouseY = e.clientY - rect.top;
+        
+        const zoomFactor = 1.15;
+        const oldScale = astScale;
+        
+        if (e.deltaY < 0) {
+          astScale = Math.min(2.5, astScale * zoomFactor);
+        } else {
+          astScale = Math.max(0.15, astScale / zoomFactor);
+        }
+        
+        astPanX = mouseX - (mouseX - astPanX) * (astScale / oldScale);
+        astPanY = mouseY - (mouseY - astPanY) * (astScale / oldScale);
+        
+        updateASTViewportTransform();
+      });
+    }
+
+    setTimeout(setupASTEventListeners, 100);
+
+    /* ─── GCC ────────────────────────────────────────────── */
+    function renderGCC() {
+      const el = document.getElementById("gcc-content");
+      if (!lastResult || !lastResult.gcc) {
+        el.innerHTML = `<div class="empty-state"><div class="empty-icon">🔨</div><span>No GCC data</span></div>`;
+        return;
+      }
+      const g = lastResult.gcc;
+      const cls = g.ok ? "success" : (g.gcc_found ? "error" : "warning");
+      const icon = g.ok ? "✓" : (g.gcc_found ? "✗" : "⚠");
+      const head = g.ok ? "Compilation Passed" : (g.gcc_found ? "Compilation Failed" : "GCC Not Found");
+
+      document.getElementById("gcc-tab-badge").textContent = g.ok ? "✓" : "✗";
+      document.getElementById("gcc-status").textContent =
+        `GCC: ${g.gcc_found ? (g.ok ? "✓ Pass" : "✗ Fail") : "⚠ Not Found"}`;
+
+      el.innerHTML = `
     <div class="check-result ${cls}">
       <div class="check-badge">${icon}</div>
       <div class="check-info">
@@ -479,23 +955,23 @@ function renderGCC() {
       <li>macOS: <code>brew install gcc</code></li>
       <li>Linux: <code>sudo apt install gcc</code></li>
     </ul></div>` : ""}`;
-}
+    }
 
-/* ─── pycparser ──────────────────────────────────────── */
-function renderPycparser() {
-  const el = document.getElementById("pyc-content");
-  if (!lastResult || !lastResult.pycparser) {
-    el.innerHTML = `<div class="empty-state"><div class="empty-icon">🧩</div><span>No pycparser data</span></div>`;
-    return;
-  }
-  const p   = lastResult.pycparser;
-  const cls = p.ok ? "success" : "error";
-  const icon = p.ok ? "✓" : "✗";
-  const head = p.ok ? "Parse Successful" : "Parse Failed";
+    /* ─── pycparser ──────────────────────────────────────── */
+    function renderPycparser() {
+      const el = document.getElementById("pyc-content");
+      if (!lastResult || !lastResult.pycparser) {
+        el.innerHTML = `<div class="empty-state"><div class="empty-icon">🧩</div><span>No pycparser data</span></div>`;
+        return;
+      }
+      const p = lastResult.pycparser;
+      const cls = p.ok ? "success" : "error";
+      const icon = p.ok ? "✓" : "✗";
+      const head = p.ok ? "Parse Successful" : "Parse Failed";
 
-  document.getElementById("pyc-status").textContent = `pycparser: ${p.ok ? "✓ Pass" : "✗ Fail"}`;
+      document.getElementById("pyc-status").textContent = `pycparser: ${p.ok ? "✓ Pass" : "✗ Fail"}`;
 
-  el.innerHTML = `
+      el.innerHTML = `
     <div class="check-result ${cls}">
       <div class="check-badge">${icon}</div>
       <div class="check-info">
@@ -507,38 +983,38 @@ function renderPycparser() {
       <pre class="error-output">${esc(p.error)}</pre></div>` : ""}
     ${p.ok && p.ast ? `<div class="check-output"><h4>pycparser AST</h4>
       <div class="ast-tree">${buildASTHTML(normPycAST(p.ast))}</div></div>` : ""}`;
-}
+    }
 
-function normPycAST(n) {
-  if (!n) return null;
-  return {
-    type: n.type || "Node",
-    value: n.name || n.op || n.value || null,
-    children: (n.children || []).map(c => normPycAST(c && c.node)).filter(Boolean),
-  };
-}
+    function normPycAST(n) {
+      if (!n) return null;
+      return {
+        type: n.type || "Node",
+        value: n.name || n.op || n.value || null,
+        children: (n.children || []).map(c => normPycAST(c && c.node)).filter(Boolean),
+      };
+    }
 
-/* ─── Metrics ────────────────────────────────────────── */
-const TOKEN_COLORS = {
-  KEYWORD:"#bc8cff", IDENTIFIER:"#58a6ff", NUMBER:"#e3b341",
-  STRING:"#3fb950", OPERATOR:"#f85149", SYMBOL:"#8b949e",
-  PREPROCESSOR:"#ffa64d", CHAR:"#64d2ff",
-};
+    /* ─── Metrics ────────────────────────────────────────── */
+    const TOKEN_COLORS = {
+      KEYWORD: "#bc8cff", IDENTIFIER: "#58a6ff", NUMBER: "#e3b341",
+      STRING: "#3fb950", OPERATOR: "#f85149", SYMBOL: "#8b949e",
+      PREPROCESSOR: "#ffa64d", CHAR: "#64d2ff",
+    };
 
-function renderMetrics() {
-  const el = document.getElementById("metrics-content");
-  if (!lastResult || !lastResult.metrics) {
-    el.innerHTML = `<div class="empty-state"><div class="empty-icon">📊</div><span>No metrics yet</span></div>`;
-    return;
-  }
-  const m     = lastResult.metrics;
-  const tc    = m.token_counts || {};
-  const total = m.total_tokens || 1;
+    function renderMetrics() {
+      const el = document.getElementById("metrics-content");
+      if (!lastResult || !lastResult.metrics) {
+        el.innerHTML = `<div class="empty-state"><div class="empty-icon">📊</div><span>No metrics yet</span></div>`;
+        return;
+      }
+      const m = lastResult.metrics;
+      const tc = m.token_counts || {};
+      const total = m.total_tokens || 1;
 
-  const bars = Object.entries(tc).map(([type, count]) => {
-    const pct   = ((count / total) * 100).toFixed(1);
-    const color = TOKEN_COLORS[type] || "#8b949e";
-    return `<div class="metric-bar-row">
+      const bars = Object.entries(tc).map(([type, count]) => {
+        const pct = ((count / total) * 100).toFixed(1);
+        const color = TOKEN_COLORS[type] || "#8b949e";
+        return `<div class="metric-bar-row">
       <div class="metric-bar-label">
         <span class="badge badge-${type.toLowerCase()}">${type}</span>
         <span>${count} (${pct}%)</span>
@@ -547,12 +1023,12 @@ function renderMetrics() {
         <div class="metric-bar-fill" style="width:${pct}%;background:${color}"></div>
       </div>
     </div>`;
-  }).join("");
+      }).join("");
 
-  const fns  = m.functions || [];
-  const vars = m.variables || [];
+      const fns = m.functions || [];
+      const vars = m.variables || [];
 
-  el.innerHTML = `<div class="metrics-grid">
+      el.innerHTML = `<div class="metrics-grid">
     <div class="metric-section">
       <h4>Token Distribution</h4>
       <div class="metric-bars">${bars || '<p class="muted">No tokens</p>'}</div>
@@ -575,29 +1051,29 @@ function renderMetrics() {
       <div class="name-list">${vars.map(v => `<span class="code-badge">${esc(v)}</span>`).join("")}</div>
     </div>` : ""}
   </div>`;
-}
+    }
 
-/* ─── Semantic Analysis ──────────────────────────────── */
-let _semFilter = "all";
+    /* ─── Semantic Analysis ──────────────────────────────── */
+    let _semFilter = "all";
 
-function renderSemantic() {
-  const el = document.getElementById("semantic-content");
-  if (!lastResult || !lastResult.semantic) {
-    el.innerHTML = `<div class="empty-state"><div class="empty-icon">🔎</div><span>No semantic data</span></div>`;
-    return;
-  }
-  const sem = lastResult.semantic;
-  const q   = sem.quality || {};
-  const issues = sem.issues || [];
-  const syms   = sem.symbol_table || [];
+    function renderSemantic() {
+      const el = document.getElementById("semantic-content");
+      if (!lastResult || !lastResult.semantic) {
+        el.innerHTML = `<div class="empty-state"><div class="empty-icon">🔎</div><span>No semantic data</span></div>`;
+        return;
+      }
+      const sem = lastResult.semantic;
+      const q = sem.quality || {};
+      const issues = sem.issues || [];
+      const syms = sem.symbol_table || [];
 
-  el.innerHTML = `<div class="semantic-layout">
+      el.innerHTML = `<div class="semantic-layout">
     <div>
       <div class="issue-filter-bar">
         <span>Filter:</span>
-        <button class="filter-btn ${_semFilter==='all'?'active':''}" onclick="setSemFilter('all')">All (${issues.length})</button>
-        <button class="filter-btn ${_semFilter==='ERROR'?'active':''}" onclick="setSemFilter('ERROR')">Errors (${issues.filter(i=>i.kind==='ERROR').length})</button>
-        <button class="filter-btn ${_semFilter==='WARNING'?'active':''}" onclick="setSemFilter('WARNING')">Warnings (${issues.filter(i=>i.kind==='WARNING').length})</button>
+        <button class="filter-btn ${_semFilter === 'all' ? 'active' : ''}" onclick="setSemFilter('all')">All (${issues.length})</button>
+        <button class="filter-btn ${_semFilter === 'ERROR' ? 'active' : ''}" onclick="setSemFilter('ERROR')">Errors (${issues.filter(i => i.kind === 'ERROR').length})</button>
+        <button class="filter-btn ${_semFilter === 'WARNING' ? 'active' : ''}" onclick="setSemFilter('WARNING')">Warnings (${issues.filter(i => i.kind === 'WARNING').length})</button>
       </div>
       <div id="issues-list">${buildIssuesHTML(issues)}</div>
       <div class="symtable-card" style="margin-top:.75rem">
@@ -609,30 +1085,37 @@ function renderSemantic() {
       ${buildQualityHTML(q)}
     </div>
   </div>`;
-}
+    }
 
-function setSemFilter(f) { _semFilter = f; renderSemantic(); }
+    function setSemFilter(f) { _semFilter = f; renderSemantic(); }
 
-function buildIssuesHTML(issues) {
-  const filtered = _semFilter === "all" ? issues : issues.filter(i => i.kind === _semFilter);
-  if (!filtered.length) return `<div class="empty-state"><div class="empty-icon">✅</div><span>No issues found — great code!</span></div>`;
-  return filtered.map(i => `
-    <div class="issue-card kind-${esc(i.kind)}">
-      <div class="issue-header">
-        <span class="issue-icon">${i.kind === "ERROR" ? "❌" : "⚠️"}</span>
-        <span class="issue-code ${esc(i.kind)}">${esc(i.code)}</span>
-        <span class="issue-line">Line ${i.line || "?"}</span>
-      </div>
-      <div class="issue-message">${esc(i.message)}</div>
-      ${i.hint ? `<div class="issue-hint">💡 ${esc(i.hint)}</div>` : ""}
-    </div>`).join("");
-}
+    function buildIssuesHTML(issues) {
+      const filtered = _semFilter === "all" ? issues : issues.filter(i => i.kind === _semFilter);
+      if (!filtered.length) return `<div class="empty-state"><div class="empty-icon">✅</div><span>No issues found — great code!</span></div>`;
+      return filtered.map(i => {
+        const fixBtn = i.quick_fix ? `
+      <button class="btn-fix" onclick="applyQuickFix(${JSON.stringify(i.quick_fix).replace(/"/g, '&quot;')})">
+        🔧 Auto-Fix
+      </button>` : "";
+        return `
+      <div class="issue-card kind-${esc(i.kind)}">
+        <div class="issue-header">
+          <span class="issue-icon">${i.kind === "ERROR" ? "❌" : "⚠️"}</span>
+          <span class="issue-code ${esc(i.kind)}">${esc(i.code)}</span>
+          <span class="issue-line">Line ${i.line || "?"}</span>
+        </div>
+        <div class="issue-message">${esc(i.message)}</div>
+        ${i.hint ? `<div class="issue-hint">💡 ${esc(i.hint)}</div>` : ""}
+        ${fixBtn}
+      </div>`;
+      }).join("");
+    }
 
-function buildQualityHTML(q) {
-  if (!q || q.score == null) return `<div class="quality-card"><div class="empty-state"><span>No quality data</span></div></div>`;
-  const color = q.color || "#8b949e";
-  const breakdown = (q.breakdown || []).filter(b => b.count > 0);
-  return `<div class="quality-card">
+    function buildQualityHTML(q) {
+      if (!q || q.score == null) return `<div class="quality-card"><div class="empty-state"><span>No quality data</span></div></div>`;
+      const color = q.color || "#8b949e";
+      const breakdown = (q.breakdown || []).filter(b => b.count > 0);
+      return `<div class="quality-card">
     <h4>Code Quality Score</h4>
     <div class="quality-score-num" style="color:${color}">${q.score}</div>
     <div class="quality-grade" style="color:${color}">Grade ${q.grade}</div>
@@ -641,11 +1124,11 @@ function buildQualityHTML(q) {
       ${breakdown.map(b => `<div class="qb-row"><span>${esc(b.label)}</span><span class="qb-num">${b.count}</span></div>`).join("")}
     </div>` : ""}
   </div>`;
-}
+    }
 
-function buildSymTableHTML(syms) {
-  if (!syms.length) return `<div style="padding:.5rem .75rem;font-size:.78rem;color:var(--text-muted)">No user-defined symbols.</div>`;
-  return `<table class="sym-table">
+    function buildSymTableHTML(syms) {
+      if (!syms.length) return `<div style="padding:.5rem .75rem;font-size:.78rem;color:var(--text-muted)">No user-defined symbols.</div>`;
+      return `<table class="sym-table">
     <thead><tr><th>Name</th><th>Type</th><th>Scope</th><th>Line</th><th>Used</th><th>Assigned</th></tr></thead>
     <tbody>${syms.map(s => `<tr>
       <td style="color:var(--accent-2)">${esc(s.name)}</td>
@@ -656,41 +1139,77 @@ function buildSymTableHTML(syms) {
       <td class="${s.assigned ? 'sym-ok' : 'sym-bad'}">${s.assigned ? "✓" : "✗"}</td>
     </tr>`).join("")}</tbody>
   </table>`;
-}
+    }
 
-/* ─── Status Bar ─────────────────────────────────────── */
-function updateStatusBar(data, elapsed) {
-  const errs = (data.errors || []).length;
-  document.getElementById("status-msg").textContent =
-    errs ? `⚠ Completed with ${errs} error(s) in ${elapsed}s`
-         : `✓ Analysis complete — ${elapsed}s`;
-  document.getElementById("analyze-time").textContent = elapsed + "s";
-}
+    /* ─── Status Bar ─────────────────────────────────────── */
+    function updateStatusBar(data, elapsed) {
+      const errs = (data.errors || []).length;
+      document.getElementById("status-msg").textContent =
+        errs ? `⚠ Completed with ${errs} error(s) in ${elapsed}s`
+          : `✓ Analysis complete — ${elapsed}s`;
+      document.getElementById("analyze-time").textContent = elapsed + "s";
+    }
 
-/* ─── Errors ─────────────────────────────────────────── */
-function showErrors(errors) {
-  const panel = document.getElementById("errors-panel");
-  document.getElementById("errors-list").innerHTML =
-    errors.map(e => `<li>${esc(e)}</li>`).join("");
-  panel.classList.remove("hidden");
-}
-function hideErrors() {
-  document.getElementById("errors-panel").classList.add("hidden");
-}
+    /* ─── Errors ─────────────────────────────────────────── */
+    function showErrors(errors) {
+      const panel = document.getElementById("errors-panel");
+      document.getElementById("errors-list").innerHTML =
+        errors.map(e => {
+          if (typeof e === 'object' && e !== null) {
+            const fixBtn = e.quick_fix ? `<button class="btn-fix-sm" onclick="applyQuickFix(${JSON.stringify(e.quick_fix).replace(/"/g, '&quot;')})">🔧 Auto-Fix</button>` : "";
+            return `<li>${esc(e.message)} ${fixBtn}</li>`;
+          }
+          return `<li>${esc(e)}</li>`;
+        }).join("");
+      panel.classList.remove("hidden");
+    }
 
-/* ─── History ────────────────────────────────────────── */
-async function loadHistory() {
-  try {
-    const res = await fetch("/history");
-    renderHistory(await res.json());
-  } catch (_) {}
-}
-function renderHistory(history) {
-  const list = document.getElementById("history-list");
-  if (!history || !history.length) {
-    list.innerHTML = `<div class="empty-state"><span>No history yet</span></div>`; return;
-  }
-  list.innerHTML = history.map(item => `
+    function applyQuickFix(qf) {
+      const lines = codeEditor.value.split("\n");
+      const lineIdx = qf.line - 1;
+
+      if (lineIdx < 0 || lineIdx >= lines.length) return;
+
+      if (qf.action === "insert_semicolon") {
+        lines[lineIdx] = lines[lineIdx].trimEnd() + ";";
+      }
+      else if (qf.action === "initialize_zero") {
+        const lineText = lines[lineIdx];
+        const regex = new RegExp(`\\b(int|char|float|double|long|short)\\s+\\b${qf.variable}\\b\\s*;`);
+        if (regex.test(lineText)) {
+          let initVal = "0";
+          if (lineText.includes("char")) initVal = "0";
+          else if (lineText.includes("float") || lineText.includes("double")) initVal = "0.0";
+          lines[lineIdx] = lineText.replace(";", ` = ${initVal};`);
+        } else {
+          lines[lineIdx] = lineText.replace(new RegExp(`\\b${qf.variable}\\b\\s*;`), `${qf.variable} = 0;`);
+        }
+      }
+      else if (qf.action === "remove_declaration" || qf.action === "remove_line") {
+        lines.splice(lineIdx, 1);
+      }
+
+      codeEditor.value = lines.join("\n");
+      updateLineNumbers();
+      analyzeCode();
+    }
+    function hideErrors() {
+      document.getElementById("errors-panel").classList.add("hidden");
+    }
+
+    /* ─── History ────────────────────────────────────────── */
+    async function loadHistory() {
+      try {
+        const res = await fetch("/history");
+        renderHistory(await res.json());
+      } catch (_) { }
+    }
+    function renderHistory(history) {
+      const list = document.getElementById("history-list");
+      if (!history || !history.length) {
+        list.innerHTML = `<div class="empty-state"><span>No history yet</span></div>`; return;
+      }
+      list.innerHTML = history.map(item => `
     <div class="history-item">
       <div class="history-meta">
         <span class="history-time">${fmtTime(item.timestamp)}</span>
@@ -701,125 +1220,126 @@ function renderHistory(history) {
       <div class="history-preview">${esc(item.source_preview)}</div>
       <div class="history-stats">Tokens: ${item.token_count} · GCC: ${item.gcc_ok ? "✓" : "✗"}</div>
     </div>`
-  ).join("");
-}
-async function clearHistory() {
-  await fetch("/history/clear", { method: "POST" });
-  loadHistory();
-}
+      ).join("");
+    }
+    async function clearHistory() {
+      await fetch("/history/clear", { method: "POST" });
+      loadHistory();
+    }
 
-/* ─── Export ─────────────────────────────────────────── */
-function exportData(type) {
-  if (!lastResult) { alert("Run an analysis first."); return; }
-  const payloads = { tokens: lastResult.tokens, ast: lastResult.ast, full: lastResult };
-  const names    = { tokens: "tokens.json", ast: "ast.json", full: "analysis_report.json" };
-  const blob = new Blob([JSON.stringify(payloads[type], null, 2)], { type: "application/json" });
-  const a = Object.assign(document.createElement("a"), { href: URL.createObjectURL(blob), download: names[type] });
-  a.click(); URL.revokeObjectURL(a.href);
-  document.getElementById("export-menu").classList.add("hidden");
-}
+    /* ─── Export ─────────────────────────────────────────── */
+    function exportData(type) {
+      if (!lastResult) { alert("Run an analysis first."); return; }
+      const payloads = { tokens: lastResult.tokens, ast: lastResult.ast, full: lastResult };
+      const names = { tokens: "tokens.json", ast: "ast.json", full: "analysis_report.json" };
+      const blob = new Blob([JSON.stringify(payloads[type], null, 2)], { type: "application/json" });
+      const a = Object.assign(document.createElement("a"), { href: URL.createObjectURL(blob), download: names[type] });
+      a.click(); URL.revokeObjectURL(a.href);
+      document.getElementById("export-menu").classList.add("hidden");
+    }
 
-/* ─── Loading state ──────────────────────────────────── */
-function setLoading(on) {
-  analyzeBtn.disabled = on;
-  analyzeBtn.textContent = on ? "⟳ Analyzing…" : "⚡ Analyze";
-  document.getElementById("status-dot").className = "status-dot " + (on ? "loading" : "ready");
-}
+    /* ─── Loading state ──────────────────────────────────── */
+    function setLoading(on) {
+      analyzeBtn.disabled = on;
+      analyzeBtn.textContent = on ? "⟳ Analyzing…" : "⚡ Analyze";
+      document.getElementById("status-dot").className = "status-dot " + (on ? "loading" : "ready");
+    }
 
-/* ─── Line numbers ───────────────────────────────────── */
-function updateLineNumbers() {
-  const lines = codeEditor.value.split("\n");
-  lineNumbers.innerHTML = lines.map((_, i) => `<span>${i + 1}</span>`).join("\n");
-  document.getElementById("char-count").textContent = `${codeEditor.value.length} chars`;
-}
-codeEditor.addEventListener("input", updateLineNumbers);
-codeEditor.addEventListener("scroll", () => { lineNumbers.scrollTop = codeEditor.scrollTop; });
-codeEditor.addEventListener("keyup", () => {
-  const txt = codeEditor.value, pos = codeEditor.selectionStart;
-  const before = txt.substring(0, pos).split("\n");
-  document.getElementById("cursor-pos").textContent =
-    `Ln ${before.length}, Col ${before[before.length - 1].length + 1}`;
-});
+    /* ─── Line numbers ───────────────────────────────────── */
+    function updateLineNumbers() {
+      const lines = codeEditor.value.split("\n");
+      lineNumbers.innerHTML = lines.map((_, i) => `<span>${i + 1}</span>`).join("\n");
+      document.getElementById("char-count").textContent = `${codeEditor.value.length} chars`;
+    }
+    codeEditor.addEventListener("input", updateLineNumbers);
+    codeEditor.addEventListener("scroll", () => { lineNumbers.scrollTop = codeEditor.scrollTop; });
+    codeEditor.addEventListener("keyup", () => {
+      const txt = codeEditor.value, pos = codeEditor.selectionStart;
+      const before = txt.substring(0, pos).split("\n");
+      document.getElementById("cursor-pos").textContent =
+        `Ln ${before.length}, Col ${before[before.length - 1].length + 1}`;
+    });
 
-/* ─── Preset selector ────────────────────────────────── */
-document.getElementById("preset-select").addEventListener("change", e => {
-  const code = PRESETS[e.target.value];
-  if (code) { codeEditor.value = code; updateLineNumbers(); }
-  e.target.value = "";
-});
+    /* ─── Preset selector ────────────────────────────────── */
+    document.getElementById("preset-select").addEventListener("change", e => {
+      const code = PRESETS[e.target.value];
+      if (code) { codeEditor.value = code; updateLineNumbers(); }
+      e.target.value = "";
+    });
 
-/* ─── Keyboard shortcut ──────────────────────────────── */
-document.addEventListener("keydown", e => {
-  if ((e.ctrlKey || e.metaKey) && e.key === "Enter") { e.preventDefault(); analyzeCode(); }
-});
+    /* ─── Keyboard shortcut ──────────────────────────────── */
+    document.addEventListener("keydown", e => {
+      if ((e.ctrlKey || e.metaKey) && e.key === "Enter") { e.preventDefault(); analyzeCode(); }
+    });
 
-/* ─── File Upload ────────────────────────────────────── */
-document.getElementById("file-upload").addEventListener("change", function () {
-  const file = this.files[0];
-  if (!file) return;
+    /* ─── File Upload ────────────────────────────────────── */
+    document.getElementById("file-upload").addEventListener("change", function () {
+      const file = this.files[0];
+      if (!file) return;
 
-  const allowed = [".c", ".h", ".txt"];
-  const ext = file.name.slice(file.name.lastIndexOf(".")).toLowerCase();
-  if (!allowed.includes(ext)) {
-    showErrors([`Unsupported file type "${ext}". Please upload a .c, .h, or .txt file.`]);
-    this.value = "";
-    return;
-  }
+      const allowed = [".c", ".h", ".txt"];
+      const ext = file.name.slice(file.name.lastIndexOf(".")).toLowerCase();
+      if (!allowed.includes(ext)) {
+        showErrors([`Unsupported file type "${ext}". Please upload a .c, .h, or .txt file.`]);
+        this.value = "";
+        return;
+      }
 
-  const reader = new FileReader();
-  reader.onload = function (e) {
-    codeEditor.value = e.target.result;
+      const reader = new FileReader();
+      reader.onload = function (e) {
+        codeEditor.value = e.target.result;
+        updateLineNumbers();
+        // Update footer filename display
+        const footer = document.getElementById("editor-lang");
+        if (footer) footer.textContent = file.name;
+        hideErrors();
+        // Auto-analyze after load
+        analyzeCode();
+      };
+      reader.onerror = () => showErrors(["Failed to read file."]);
+      reader.readAsText(file);
+      this.value = ""; // reset so same file can be re-uploaded
+    });
+
+    /* ─── Analyze button ─────────────────────────────────── */
+    analyzeBtn.addEventListener("click", analyzeCode);
+
+
+    /* ─── Export dropdown ────────────────────────────────── */
+    document.getElementById("export-btn").addEventListener("click", () => {
+      document.getElementById("export-menu").classList.toggle("hidden");
+    });
+    document.addEventListener("click", e => {
+      if (!e.target.closest(".export-wrapper"))
+        document.getElementById("export-menu").classList.add("hidden");
+    });
+
+    /* ─── History drawer ─────────────────────────────────── */
+    document.getElementById("btn-history").addEventListener("click", () => {
+      document.getElementById("history-drawer").classList.remove("hidden");
+      document.getElementById("drawer-overlay").classList.remove("hidden");
+      loadHistory();
+    });
+    function closeDrawer() {
+      document.getElementById("history-drawer").classList.add("hidden");
+      document.getElementById("drawer-overlay").classList.add("hidden");
+    }
+    document.getElementById("close-drawer").addEventListener("click", closeDrawer);
+    document.getElementById("drawer-overlay").addEventListener("click", closeDrawer);
+
+    /* ─── Helpers ────────────────────────────────────────── */
+    function esc(s) {
+      return String(s)
+        .replace(/&/g, "&amp;").replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+    }
+    function fmtTime(iso) {
+      try { return new Date(iso).toLocaleTimeString(); } catch (_) { return iso; }
+    }
+
+    /* ─── Init ───────────────────────────────────────────── */
     updateLineNumbers();
-    // Update footer filename display
-    const footer = document.getElementById("editor-lang");
-    if (footer) footer.textContent = file.name;
-    hideErrors();
-    // Auto-analyze after load
-    analyzeCode();
-  };
-  reader.onerror = () => showErrors(["Failed to read file."]);
-  reader.readAsText(file);
-  this.value = ""; // reset so same file can be re-uploaded
-});
-
-/* ─── Analyze button ─────────────────────────────────── */
-analyzeBtn.addEventListener("click", analyzeCode);
-
-
-/* ─── Export dropdown ────────────────────────────────── */
-document.getElementById("export-btn").addEventListener("click", () => {
-  document.getElementById("export-menu").classList.toggle("hidden");
-});
-document.addEventListener("click", e => {
-  if (!e.target.closest(".export-wrapper"))
-    document.getElementById("export-menu").classList.add("hidden");
-});
-
-/* ─── History drawer ─────────────────────────────────── */
-document.getElementById("btn-history").addEventListener("click", () => {
-  document.getElementById("history-drawer").classList.remove("hidden");
-  document.getElementById("drawer-overlay").classList.remove("hidden");
-  loadHistory();
-});
-function closeDrawer() {
-  document.getElementById("history-drawer").classList.add("hidden");
-  document.getElementById("drawer-overlay").classList.add("hidden");
-}
-document.getElementById("close-drawer").addEventListener("click", closeDrawer);
-document.getElementById("drawer-overlay").addEventListener("click", closeDrawer);
-
-/* ─── Helpers ────────────────────────────────────────── */
-function esc(s) {
-  return String(s)
-    .replace(/&/g,"&amp;").replace(/</g,"&lt;")
-    .replace(/>/g,"&gt;").replace(/"/g,"&quot;");
-}
-function fmtTime(iso) {
-  try { return new Date(iso).toLocaleTimeString(); } catch(_) { return iso; }
-}
-
-/* ─── Init ───────────────────────────────────────────── */
-updateLineNumbers();
-</script>
+  </script>
 </body>
+
 </html>

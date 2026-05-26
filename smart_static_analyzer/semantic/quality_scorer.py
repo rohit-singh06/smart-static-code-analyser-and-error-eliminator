@@ -1,14 +1,10 @@
 """
-Code Quality Scorer — evaluates code quality based on semantic analysis results.
-
-Score: 100 − (15 × errors) − (5 × warnings)  [clamped to 0–100]
-Grade: A(90+) B(75+) C(60+) D(45+) F(below 45)
+Code Quality Scorer — evaluates code based on semantic analysis issues.
 """
-from __future__ import annotations
+
 from typing import List
 
-
-_GRADES = [
+GRADES = [
     (90, "A", "#3fb950", "Excellent — clean code with no detected issues."),
     (75, "B", "#58a6ff", "Good — minor issues detected."),
     (60, "C", "#e3b341", "Fair — several issues need attention."),
@@ -18,23 +14,26 @@ _GRADES = [
 
 
 def compute_quality(issues: List) -> dict:
-    """
-    Compute a quality score from a list of SemanticIssue objects.
-    Returns a dict suitable for JSON serialisation.
-    """
-    errors   = [i for i in issues if i.kind == "ERROR"]
+    """Compute quality score and grading details from a list of SemanticIssues."""
+    errors = [i for i in issues if i.kind == "ERROR"]
     warnings = [i for i in issues if i.kind == "WARNING"]
 
-    # Count specific warning types
+    # Count specific kinds of warning issues
     unreachable = sum(1 for i in warnings if i.code == "UNREACHABLE_CODE")
-    unused      = sum(1 for i in warnings if i.code == "UNUSED_VAR")
-    uninit      = sum(1 for i in warnings if i.code == "UNINITIALIZED_USE")
+    unused = sum(1 for i in warnings if i.code == "UNUSED_VAR")
+    uninit = sum(1 for i in warnings if i.code == "UNINITIALIZED_USE")
+    type_errors = sum(1 for i in errors if i.code == "TYPE_MISMATCH")
+    type_warns = sum(1 for i in warnings if i.code == "TYPE_MISMATCH")
 
-    score = 100 - len(errors) * 15 - len(warnings) * 5
+    hard_errors = len(errors) - type_errors
+
+    # Deduction system
+    score = 100 - (hard_errors * 15) - (type_errors * 10) - (len(warnings) * 5)
     score = max(0, min(100, score))
 
+    # Evaluate Grade
     grade, color, summary = "F", "#f85149", "Critical"
-    for threshold, g, c, s in _GRADES:
+    for threshold, g, c, s in GRADES:
         if score >= threshold:
             grade, color, summary = g, c, s
             break
@@ -44,16 +43,18 @@ def compute_quality(issues: List) -> dict:
         "grade": grade,
         "color": color,
         "summary": summary,
-        "error_count":       len(errors),
-        "warning_count":     len(warnings),
+        "error_count": len(errors),
+        "warning_count": len(warnings),
         "unreachable_count": unreachable,
-        "unused_count":      unused,
-        "uninit_count":      uninit,
+        "unused_count": unused,
+        "uninit_count": uninit,
+        "type_mismatch_count": type_errors + type_warns,
         "breakdown": [
-            {"label": "Semantic Errors",   "count": len(errors),   "points": len(errors) * 15},
-            {"label": "Warnings",          "count": len(warnings), "points": len(warnings) * 5},
-            {"label": "Unreachable Code",  "count": unreachable,   "points": 0},
-            {"label": "Unused Variables",  "count": unused,        "points": 0},
-            {"label": "Uninitialised Use", "count": uninit,        "points": 0},
+            {"label": "Semantic Errors", "count": hard_errors, "points": hard_errors * 15},
+            {"label": "Type Mismatches", "count": type_errors + type_warns, "points": type_errors * 10 + type_warns * 5},
+            {"label": "Warnings", "count": len(warnings) - type_warns, "points": (len(warnings) - type_warns) * 5},
+            {"label": "Unreachable Code", "count": unreachable, "points": 0},
+            {"label": "Unused Variables", "count": unused, "points": 0},
+            {"label": "Uninitialised Use", "count": uninit, "points": 0},
         ],
     }

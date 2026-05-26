@@ -1,18 +1,9 @@
 """
-Utility helpers for the Smart Static Code Analyzer.
+Utility helpers for the Static Code Analyzer.
 """
 
-from __future__ import annotations
-
-from typing import Any, List
-
-try:
-    from .ast_nodes import ASTNode
-    from .lexer import Token
-except ImportError:
-    from ast_nodes import ASTNode
-    from lexer import Token
-
+from ast_nodes import ASTNode
+from lexer import Token
 
 def ast_to_dict(node: ASTNode) -> dict:
     """Convert an ASTNode tree into a JSON-serializable dict."""
@@ -22,8 +13,6 @@ def ast_to_dict(node: ASTNode) -> dict:
         "children": [ast_to_dict(child) for child in node.children],
     }
 
-
-def tokens_to_list(tokens: List[Token]) -> list[dict[str, Any]]:
+def tokens_to_list(tokens: list[Token]) -> list[dict]:
     """Convert Token objects to simple dictionaries."""
     return [t.to_dict() for t in tokens]
-
